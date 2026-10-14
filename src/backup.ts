@@ -4,7 +4,7 @@ import { Book, type BookContent } from './core/book'
 import * as db from './db'
 import type { BookMeta, Note } from './db'
 import { formatDate } from './notes/export'
-import { refreshLibrary } from './library'
+import { extendLoadedBook, refreshLibrary } from './library'
 import { player } from './player'
 
 interface BackupManifest {
@@ -40,15 +40,20 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
 }
 
 /** 按笔记引用的原文，在本机这本书里找到对应位置（找不到就保持原位） */
-function relocate(book: Book, note: Note): Pick<Note, 'b' | 'o'> {
+/** 按笔记引用的原文在书里找位置（离原位置最近的那处） */
+function findQuote(book: Book, note: Note): Pick<Note, 'b' | 'o'> | null {
   const needle = note.quote.slice(0, 40)
-  if (!needle) return { b: Math.min(note.b, book.blocks.length - 1), o: 0 }
+  if (!needle) return null
   let best: { b: number; o: number } | null = null
   for (let b = 0; b < book.blocks.length; b++) {
     const o = book.blocks[b].indexOf(needle)
     if (o >= 0 && (!best || Math.abs(b - note.b) < Math.abs(best.b - note.b))) best = { b, o }
   }
-  return best ?? book.clamp({ b: note.b, o: note.o })
+  return best
+}
+
+function relocate(book: Book, note: Note): Pick<Note, 'b' | 'o'> {
+  return findQuote(book, note) ?? (note.quote ? book.clamp({ b: note.b, o: note.o }) : { b: Math.min(note.b, book.blocks.length - 1), o: 0 })
 }
 
 export async function restoreBackup(file: File): Promise<{ books: number; notes: number; skipped: number }> {
@@ -70,15 +75,58 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
   const progressUpdated: string[] = []
   // 同一本书重新导入后，段落划分可能不同：按书 id 记下本机的正文，用来换算位置
   const remapped = new Map<string, Book>()
+  // 本机还在识别中的书：只把能找到原文的笔记挪过去，其余保持原位置
+  const partialBooks = new Map<string, Book>()
   for (const meta of manifest.books) {
     const cover = files[`covers/${meta.id}`]
     const contentFile = files[`contents/${meta.id}.json`]
     const current = findLocal(meta)
     if (current) {
       idMap.set(meta.id, current.id)
+      // 以前从备份恢复的、没识别完的书，这次备份里识别得更多：换成更完整的正文
+      const behind =
+        current.id === meta.id &&
+        !!current.ocr &&
+        current.ocr.status !== 'done' &&
+        current.ocr.status !== 'running' &&
+        !!contentFile &&
+        !!meta.ocr &&
+        (meta.ocr.status === 'done' || meta.ocr.done > current.ocr.done)
+      if (behind) {
+        const content = JSON.parse(strFromU8(contentFile)) as BookContent
+        const newer = (meta.lastReadAt ?? 0) > (current.lastReadAt ?? 0)
+        const full: BookMeta = {
+          ...meta,
+          ...(newer
+            ? {}
+            : {
+                pos: current.pos,
+                percent: current.percent,
+                chapter: current.chapter,
+                lastReadAt: current.lastReadAt,
+                finished: current.finished,
+                rate: current.rate,
+                voice: current.voice,
+              }),
+          cover: current.cover ?? (cover ? cover.slice().buffer : null),
+        }
+        if (full.ocr && full.ocr.status !== 'done') {
+          // 本机有原始 PDF 就从备份的进度接着识别，没有就要重新导入
+          full.ocr = (await db.getFile(current.id))
+            ? { ...full.ocr, status: 'paused', error: undefined }
+            : { ...full.ocr, status: 'error', error: '原始 PDF 不在本机，请重新导入以继续识别' }
+        }
+        await db.saveBook(full, content)
+        extendLoadedBook(current.id, content)
+        progressUpdated.push(current.id)
+        books++
+        continue
+      }
       // 本机这本还在文字识别中：正文不完整，无法按比例换算位置，保留本机进度
       const partial = !!current.ocr && current.ocr.status !== 'done' && current.id !== meta.id
       if (partial) {
+        const content = await db.getContent(current.id)
+        if (content?.blocks.length) partialBooks.set(current.id, new Book(content))
         books++
         continue
       }
@@ -130,6 +178,11 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const note: Note = { ...original, bookId }
     const local = remapped.get(bookId)
     if (local) Object.assign(note, relocate(local, note))
+    const partial = partialBooks.get(bookId)
+    if (partial) {
+      const hit = findQuote(partial, note)
+      if (hit) Object.assign(note, hit)
+    }
     // 本机上更新过的笔记不被旧备份覆盖
     const current = await db.getNote(note.id)
     if (current && current.updatedAt >= note.updatedAt) continue

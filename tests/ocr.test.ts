@@ -58,6 +58,22 @@ describe('running headers', () => {
     const recent = edgeKeys(['中國權貴的死亡遊戲', '第一段文字。', '12'])
     expect(stripRunningHeads(['中國權貴的死亡遊戲 13', '第二段文字。'], recent)).toEqual(['第二段文字。'])
   })
+  it('keeps chapter headings that only look like the previous one', () => {
+    for (const [a, b] of [
+      ['Chapter 2', 'Chapter 3'],
+      ['Chapter One', 'Chapter Two'],
+      ['CHAPTER XII', 'CHAPTER XIII'],
+      ['第12章', '第13章'],
+      ['第一百零一回', '第一百零二回'],
+    ]) {
+      expect(stripRunningHeads([b, '正文。'], edgeKeys([a, '正文。']))).toEqual([b, '正文。'])
+    }
+  })
+  it('drops a chapter-title running header with its page number', () => {
+    const recent = edgeKeys(['第一章 風起 22', '正文。'])
+    expect(stripRunningHeads(['第一章 風起 23', '個不停。'], recent)).toEqual(['個不停。'])
+    expect(stripRunningHeads(['第一章 風起', '23', '個不停。'], edgeKeys(['第一章 風起', '正文。']))).toEqual(['個不停。'])
+  })
   it('keeps headers seen for the first time, sentences and bookmark titles', () => {
     expect(stripRunningHeads(['第三章 風波', '正文。'], [])).toEqual(['第三章 風波', '正文。'])
     expect(stripRunningHeads(['好。', '正文。'], ['好'])).toEqual(['好。', '正文。'])
@@ -76,7 +92,20 @@ describe('pages joined mid-sentence', () => {
     appendPage(content, 0, ['第一章 開始', '清晨的陽光照進小屋，窗外的鳥兒開始歌唱，她推開門走了出去，沿著'])
     appendPage(content, 1, ['河邊一直往前走。', '天黑了。'])
     expect(content.blocks).toEqual(['第一章 開始', '清晨的陽光照進小屋，窗外的鳥兒開始歌唱，她推開門走了出去，沿著河邊一直往前走。', '天黑了。'])
-    expect(content.pages).toEqual([0, 1])
+    expect(content.pages).toEqual([0, 2])
+  })
+  it('does not join headings, bookmark titles or across a blank page', () => {
+    const long = '清晨的陽光照進小屋，窗外的鳥兒開始歌唱，她推開門走了出去，沿著'
+    expect(continuesAcrossPage(long, '一、問題的提出')).toBe(false)
+    expect(continuesAcrossPage(long, '2. Methods and data')).toBe(false)
+    expect(continuesAcrossPage('Chapter One: The Boy Who Lived', 'Mr. and Mrs. Dursley, of number four, Privet Drive, were proud')).toBe(false)
+    const content: BookContent = { id: 'x', blocks: [long], heads: {}, toc: [], sections: [], pages: [0] }
+    appendPage(content, 1, ['The Early Years of the Republic', '正文。'], ['The Early Years of the Republic'])
+    expect(content.blocks[1]).toBe('The Early Years of the Republic')
+    appendPage(content, 2, [])
+    appendPage(content, 3, ['河邊一直往前走的時候，天已經黑了下來。'], [], false)
+    expect(content.blocks.length).toBe(4)
+    expect(content.pages).toEqual([0, 1, 3, 3])
   })
 })
 

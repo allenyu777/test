@@ -52,8 +52,7 @@ export function ocrTextToParagraphs(text: string): string[] {
     .map(p => p.trim())
     .filter(Boolean)
   // 页码只会在页首或页尾；正文中间单独一行的数字（年份等）保留
-  while (paragraphs.length && isPageNumber(paragraphs[0])) paragraphs.shift()
-  while (paragraphs.length && isPageNumber(paragraphs[paragraphs.length - 1])) paragraphs.pop()
+  trimPageNumbers(paragraphs)
   return paragraphs
 }
 
@@ -82,9 +81,25 @@ export function endsSentence(p: string): boolean {
   return TERMINAL.test(p.trim())
 }
 
-/** 比较页眉用的键：去掉空白、数字和标点 */
+/** 去掉一行开头或结尾的页码（页眉常和页码排在同一行） */
+function withoutPageNumber(p: string): string {
+  const t = p.replace(/^\s*\d{1,4}\s+|\s+\d{1,4}\s*$/g, '').trim()
+  if (!t) return p
+  // "Chapter 3" 里的 3 是章节号，不是页码
+  if (chapterLevel(p) >= 0 && chapterLevel(t) < 0) return p
+  return t
+}
+
+/** 像章节标题的一行（页码去掉后判断） */
+function headingLike(p: string): boolean {
+  return chapterLevel(p) >= 0 || chapterLevel(withoutPageNumber(p)) >= 0
+}
+
+/** 比较页眉用的键：去掉页码、空白和标点（保留章节号等数字） */
 export function edgeKey(p: string): string {
-  return p.toLowerCase().replace(/[\s\d\p{P}\p{S}]/gu, '')
+  return withoutPageNumber(p)
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]/gu, '')
 }
 
 /** 一页首尾可能是页眉的段落（短、没有句末标点）的键，供后面几页比较 */
@@ -93,13 +108,29 @@ export function edgeKeys(paragraphs: string[]): string[] {
   for (const p of [paragraphs[0], paragraphs[paragraphs.length - 1]]) {
     if (!p || p.length > 30 || endsSentence(p)) continue
     const key = edgeKey(p)
-    if (key.length >= 2 && !keys.includes(key)) keys.push(key)
+    if (key.replace(/\d/g, '').length >= 2 && !keys.includes(key)) keys.push(key)
   }
   return keys
 }
 
+/** 两个页眉键是否相同：允许个别字识别错（较长的键才允许） */
+function sameHeader(a: string, b: string): boolean {
+  if (a === b) return true
+  const x = a.replace(/\d/g, '')
+  const y = b.replace(/\d/g, '')
+  if (x === y) return true
+  if (Math.min(x.length, y.length) < 6 || Math.min(x.length, y.length) / Math.max(x.length, y.length) < 0.7) return false
+  return overlap(x, y) >= 0.85
+}
+
+function trimPageNumbers(paragraphs: string[]) {
+  while (paragraphs.length && isPageNumber(paragraphs[0])) paragraphs.shift()
+  while (paragraphs.length && isPageNumber(paragraphs[paragraphs.length - 1])) paragraphs.pop()
+}
+
 /**
  * 去掉页眉页脚：页首、页尾的短段落和最近几页页首页尾出现过的一样（书名、章节名），就是页眉。
+ * 像章节标题的行（"第13章""Chapter 3"）必须和之前的完全一样才算页眉，不同章节的标题不会被去掉。
  * keep 中的标题（书签）不去掉。
  */
 export function stripRunningHeads(paragraphs: string[], recent: string[], keep: string[] = []): string[] {
@@ -107,20 +138,30 @@ export function stripRunningHeads(paragraphs: string[], recent: string[], keep: 
     if (p.length > 30 || endsSentence(p)) return false
     if (keep.some(t => overlap(p, t) >= 0.6)) return false
     const key = edgeKey(p)
-    if (key.length < 2) return false
-    return recent.some(r => r === key || (Math.min(r.length, key.length) / Math.max(r.length, key.length) >= 0.7 && overlap(r, key) >= 0.8))
+    if (key.replace(/\d/g, '').length < 2) return false
+    if (headingLike(p)) return recent.includes(key)
+    return recent.some(r => sameHeader(r, key))
   }
   const out = paragraphs.slice()
-  if (out.length && running(out[0])) out.shift()
-  if (out.length && running(out[out.length - 1])) out.pop()
+  // 去掉页眉后，旁边的页码也露出来了
+  if (out.length && running(out[0])) {
+    out.shift()
+    trimPageNumbers(out)
+  }
+  if (out.length && running(out[out.length - 1])) {
+    out.pop()
+    trimPageNumbers(out)
+  }
   return out
 }
 
 /** 上一页最后一段话没说完（没有句末标点），这一页第一段是它的后半句 */
 export function continuesAcrossPage(prev: string, next: string): boolean {
   if (!prev || !next || prev.length < 20 || endsSentence(prev)) return false
-  if (chapterLevel(next) >= 0) return false
+  if (headingLike(prev) || headingLike(next)) return false
+  // 编号小标题（"一、问题的提出""2. Methods"）
+  if (next.length <= 30 && /^([一二三四五六七八九十百]+|\d{1,3})[、.．)）]\s*\S/.test(next)) return false
   // 短而没有标点的一行更可能是标题
-  if (next.length <= 15 && !/[，。！？；：,.!?;:、]/.test(next)) return false
+  if (next.length <= 15 && !/[，。！？；：,.!?;:]/.test(next)) return false
   return true
 }

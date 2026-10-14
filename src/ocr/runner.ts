@@ -80,17 +80,24 @@ export function applyOutlineTitles(paragraphs: string[], titles: string[]): stri
 /**
  * 把识别出的一页加到正文末尾。
  * 上一页最后一句话没说完时，和这一页的第一段接成一段（不然朗读会在句子中间停顿）。
+ * titles：书签指向这一页的标题，不和上一页接起来；joinable：上一页有文字（空白页、插图页之后不接）。
  */
-export function appendPage(content: BookContent, page: number, paragraphs: string[]) {
+export function appendPage(content: BookContent, page: number, paragraphs: string[], titles: string[] = [], joinable = true) {
   content.pages ??= []
   const rest = paragraphs.slice()
   const last = content.blocks.length - 1
-  if (rest.length && last >= 0 && content.heads[last] == null && continuesAcrossPage(content.blocks[last], rest[0])) {
+  if (
+    joinable &&
+    rest.length &&
+    last >= 0 &&
+    content.heads[last] == null &&
+    !titles.includes(rest[0]) &&
+    continuesAcrossPage(content.blocks[last], rest[0])
+  ) {
     content.blocks[last] = joinLines([content.blocks[last], rest.shift()!])
-    content.pages[page] = last
-  } else {
-    content.pages[page] = content.blocks.length
   }
+  // 指向这一页上开始的第一段（接上去的半句话算上一页的段落）
+  content.pages[page] = content.blocks.length
   content.blocks.push(...rest)
 }
 
@@ -199,7 +206,13 @@ class OcrRunner {
       const live = library.get().books.find(b => b.id === id)
       // 识别途中用户点了暂停或删除了书，就不标记为出错
       if (live?.ocr?.status === 'running' && !this.cancelled.has(id)) {
-        await this.setOcr(id, { status: 'error', error: e instanceof Error ? e.message : '识别失败' }).catch(console.error)
+        const error = e instanceof Error ? e.message : '识别失败'
+        await this.setOcr(id, { status: 'error', error }).catch(err => {
+          // 连状态都存不进去：至少在界面上显示出错，不要一直显示"识别中"
+          console.error(err)
+          patchBookLocal(id, { ocr: { ...live.ocr!, status: 'error', error } })
+          this.listeners.forEach(fn => fn(id))
+        })
       }
     } finally {
       this.current = null
@@ -243,7 +256,9 @@ class OcrRunner {
       const outline = await readOutline(pdf)
       const repeated = await sampleRepeatedLines(pdf).catch(() => new Set<string>())
       let ocr: OcrInfo = { ...meta.ocr }
-      let edges = ocr.edges ?? []
+      // 最近 4 页的页首页尾短行（页眉通常单双页交替）
+      let edges = Array.isArray(ocr.edges?.[0]) ? ocr.edges.slice(0, 4) : []
+      let prevHadText = true
       for (let p = ocr.done; p < ocr.pages; p++) {
         if (this.cancelled.has(id)) return
         if (!options.untilText) {
@@ -255,11 +270,12 @@ class OcrRunner {
         const raw = await this.recognizeWithRetry(id, pdf, p, ocr, repeated)
         if (!raw) return
         const titles = outline.filter(item => item.page === p).map(item => item.title)
-        const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges, titles), titles)
+        const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges.flat(), titles), titles)
           .map(t => normalizeText(t))
           .filter(Boolean)
-        edges = [...edgeKeys(raw), ...edges].slice(0, 12)
-        appendPage(content, p, paragraphs)
+        edges = [edgeKeys(raw), ...edges].slice(0, 4)
+        appendPage(content, p, paragraphs, titles, prevHadText)
+        prevHadText = paragraphs.length > 0
         rebuildOcrContent(content, outline)
 
         const finished = p + 1 >= ocr.pages

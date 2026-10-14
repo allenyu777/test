@@ -61,6 +61,8 @@ export function createSource(book: Book, from: Pos, maxChars: number, stopAt: ()
         const raw = book.sentenceText(pos)
         const t = speechText(raw)
         if (sentences.length && (limit === 0 || text.length + t.length > limit)) break
+        // 读不出来而跳过的句子（例如只有网址）也记下，续读时从它后面接着
+        last = { pos, len: raw.length }
         if (t && isSpeakable(t)) {
           if (prevBlock >= 0 && pos.b !== prevBlock) {
             // 段落之间补一个停顿
@@ -69,7 +71,6 @@ export function createSource(book: Book, from: Pos, maxChars: number, stopAt: ()
           }
           text += t
           sentences.push({ pos, text: t })
-          last = { pos, len: raw.length }
           prevBlock = pos.b
         }
         pos = book.next(pos)

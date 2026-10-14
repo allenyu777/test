@@ -36,8 +36,8 @@ export interface OcrInfo {
   lang: OcrLang
   status: 'running' | 'paused' | 'done' | 'error'
   error?: string
-  /** 最近几页页首页尾的短行（用来认出页眉） */
-  edges?: string[]
+  /** 最近几页（新的在前）页首页尾的短行，用来认出页眉 */
+  edges?: string[][]
 }
 
 /** 原始文件（扫描版 PDF 识别过程中需要） */
@@ -134,16 +134,21 @@ async function writeBookPatch(id: string, patch: Partial<BookMeta>) {
   await tx.done
 }
 
-/** 更新书籍信息（进度保存很频繁）；连接失效时重新打开数据库再试一次 */
-export async function updateBook(id: string, patch: Partial<BookMeta>) {
+/** 写入数据库；iOS 在后台关掉连接后第一次写入会失败，这时重新打开数据库再试一次（失败的事务什么都不会写入） */
+async function retryStale<T>(op: () => Promise<T>): Promise<T> {
   try {
-    await writeBookPatch(id, patch)
+    return await op()
   } catch (e) {
     const name = (e as DOMException)?.name
     if (name !== 'InvalidStateError' && name !== 'UnknownError' && name !== 'TransactionInactiveError') throw e
     dbPromise = null
-    await writeBookPatch(id, patch)
+    return op()
   }
+}
+
+/** 更新书籍信息（进度保存很频繁） */
+export async function updateBook(id: string, patch: Partial<BookMeta>) {
+  await retryStale(() => writeBookPatch(id, patch))
 }
 
 export async function saveContent(content: BookContent) {
@@ -179,6 +184,10 @@ export async function saveOcrProgress(
   /** 还没有当前章节时用这个（不覆盖播放器记下的章节） */
   defaultChapter?: string,
 ): Promise<BookMeta | null> {
+  return retryStale(() => writeOcrProgress(id, content, patch, defaultChapter))
+}
+
+async function writeOcrProgress(id: string, content: BookContent, patch: Partial<BookMeta>, defaultChapter?: string) {
   const d = await db()
   const tx = d.transaction(['books', 'contents'], 'readwrite')
   const books = tx.objectStore('books')
@@ -198,7 +207,11 @@ export async function saveOcrProgress(
 }
 
 /** 只改识别状态（在事务里与最新的记录合并） */
-export async function patchOcr(id: string, patch: Partial<OcrInfo>): Promise<OcrInfo | null> {
+export function patchOcr(id: string, patch: Partial<OcrInfo>): Promise<OcrInfo | null> {
+  return retryStale(() => writeOcrPatch(id, patch))
+}
+
+async function writeOcrPatch(id: string, patch: Partial<OcrInfo>): Promise<OcrInfo | null> {
   const d = await db()
   const tx = d.transaction('books', 'readwrite')
   const current = await tx.store.get(id)

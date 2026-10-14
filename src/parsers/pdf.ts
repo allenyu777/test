@@ -340,7 +340,7 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
     // 字体缺少正确的字符映射时，提取出的文字是乱码：这些页按图片识别
     const tooManyGarbled = garbledPages >= Math.max(3, pdf.numPages * 0.05)
     // 大部分页面没有文字层：按扫描版处理，交给文字识别
-    if (tooManyGarbled || totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.3) {
+    if (tooManyGarbled || totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
       const info = await pdfInfo(pdf, fileName)
       // 乱码页里的标题等行常常是正常的，也拿来判断繁简
       const cleanLines = pages.flat().map(l => l.text).filter(t => garbleRatio(t) === 0)
