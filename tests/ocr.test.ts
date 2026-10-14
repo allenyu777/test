@@ -183,3 +183,33 @@ describe('PDF watermarks', () => {
     expect(repeatedLineKeys(garbled).size).toBe(0)
   })
 })
+
+import { dropMarginLines, linesToText, type OcrLine } from '../src/ocr/layout'
+import pageLines from './fixtures/ocr-page-lines.json'
+
+describe('page header and footer by position', () => {
+  // 用户那一页（丁戊奇荒）的识别结果：页眉"2 丁戊奇荒"被识别成乱码，而且被斑点拉宽
+  const real = pageLines as OcrLine[]
+  const pageHeight = 2260
+  const body = (y: number, text = '这是一行正文，排得满满的，一共有二十多个字呢。还有。', para = 1): OcrLine => ({ text, para, x0: 120, x1: 1020, y0: y, y1: y + 28 })
+
+  it('drops the running header even when misread and widened by specks', () => {
+    const kept = dropMarginLines(real, pageHeight)
+    expect(kept.map(l => l.text)).not.toContain(real[0].text)
+    expect(kept).toHaveLength(real.length - 1)
+    expect(ocrTextToParagraphs(linesToText(kept))[0].startsWith('另一本书')).toBe(true)
+  })
+  it('keeps a body line that starts the page and a big chapter title', () => {
+    const lines = [body(230, '的方法。', 0), body(280), body(329), body(378)]
+    lines[0].x1 = 300
+    expect(dropMarginLines(lines, pageHeight)).toHaveLength(4)
+    const title: OcrLine = { text: '第三章 灾荒', para: 0, x0: 400, x1: 700, y0: 150, y1: 210 }
+    expect(dropMarginLines([title, body(330), body(379), body(428)], pageHeight)).toHaveLength(4)
+  })
+  it('drops a page number at the bottom but not the last short line of text', () => {
+    const folio: OcrLine = { text: '23', para: 9, x0: 560, x1: 590, y0: 2050, y1: 2075 }
+    const lines = [body(1800), body(1849), body(1898, '最后一行。', 2), folio]
+    lines[2].x1 = 300
+    expect(dropMarginLines(lines, pageHeight).map(l => l.text)).toEqual(lines.slice(0, 3).map(l => l.text))
+  })
+})

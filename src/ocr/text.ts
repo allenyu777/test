@@ -89,7 +89,7 @@ const gluedStartRe = new RegExp(`^\\d{1,4}(?=[${IDEO}])`)
 const NUMBERED_LABEL = /^(day|letter|sonnet|psalm|lesson|section|exercise|scene|act|canto|entry|poem|song|step|unit|lecture|week|no\.?|number)$/i
 
 /** 去掉一行开头或结尾的页码（页眉常和页码排在同一行） */
-function withoutPageNumber(p: string): string {
+export function withoutPageNumber(p: string): string {
   const s = p.trim()
   const t = s
     .replace(/^\d{1,4}\s+|\s+\d{1,4}$/g, '')
@@ -104,7 +104,7 @@ function withoutPageNumber(p: string): string {
 }
 
 /** 像章节标题的一行（页码去掉后判断） */
-function headingLike(p: string): boolean {
+export function headingLike(p: string): boolean {
   return chapterLevel(p) >= 0 || chapterLevel(withoutPageNumber(p)) >= 0
 }
 

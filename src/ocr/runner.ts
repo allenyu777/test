@@ -17,6 +17,7 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
+import { dropMarginLines, linesToText } from './layout'
 import {
   continuesAcrossPage,
   edgeKeys,
@@ -345,7 +346,10 @@ class OcrRunner {
     }
     const canvas = await renderPage(pdf, index)
     try {
-      return ocrTextToParagraphs(await recognizeCanvas(canvas, ocr.engine, ocr.lang))
+      const pageHeight = canvas.height
+      const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
+      // 本机识别有每一行的位置：先按位置去掉页眉页脚
+      return ocrTextToParagraphs(result.lines ? linesToText(dropMarginLines(result.lines, pageHeight)) : result.text)
     } finally {
       // 及时释放画布内存（iOS 对画布总内存有限制）
       canvas.width = 0

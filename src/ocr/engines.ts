@@ -1,6 +1,13 @@
 // 文字识别引擎：本机（Tesseract，离线免费）或云端（OpenAI 兼容的视觉模型）
 import type { OcrLang } from '../db'
 import { settings } from '../settings'
+import type { OcrLine } from './layout'
+
+/** 一页的识别结果；本机识别同时给出每一行的位置（用来去掉页眉页脚） */
+export interface OcrResult {
+  text: string
+  lines?: OcrLine[]
+}
 
 type TesseractWorker = Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>>
 
@@ -71,7 +78,7 @@ export async function releaseLocalOcr() {
   }
 }
 
-async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise<string> {
+async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise<OcrResult> {
   const worker = await localWorker(lang)
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -82,8 +89,16 @@ async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise
     }, 180_000)
   })
   try {
-    const { data } = await Promise.race([worker.recognize(canvas), timeout])
-    return data.text ?? ''
+    const { data } = await Promise.race([worker.recognize(canvas, {}, { text: true, blocks: true }), timeout])
+    const lines: OcrLine[] = []
+    let para = 0
+    for (const block of data.blocks ?? []) {
+      for (const p of block.paragraphs) {
+        for (const l of p.lines) lines.push({ text: l.text, para, ...l.bbox })
+        para++
+      }
+    }
+    return { text: data.text ?? '', lines: lines.length ? lines : undefined }
   } finally {
     clearTimeout(timer)
   }
@@ -139,6 +154,6 @@ async function recognizeCloud(canvas: HTMLCanvasElement, lang: OcrLang): Promise
   return json.choices?.[0]?.message?.content ?? ''
 }
 
-export function recognizeCanvas(canvas: HTMLCanvasElement, engine: 'local' | 'cloud', lang: OcrLang): Promise<string> {
-  return engine === 'cloud' ? recognizeCloud(canvas, lang) : recognizeLocal(canvas, lang)
+export async function recognizeCanvas(canvas: HTMLCanvasElement, engine: 'local' | 'cloud', lang: OcrLang): Promise<OcrResult> {
+  return engine === 'cloud' ? { text: await recognizeCloud(canvas, lang) } : recognizeLocal(canvas, lang)
 }
