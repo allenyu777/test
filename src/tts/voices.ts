@@ -57,6 +57,22 @@ export function langLabel(lang: string): string {
 }
 
 let cachedVoices: SpeechSynthesisVoice[] = []
+const voiceListeners = new Set<() => void>()
+
+/** 系统声音列表变化时通知（例如刚在系统设置里下载了新声音） */
+export function onVoicesChanged(fn: () => void): () => void {
+  voiceListeners.add(fn)
+  return () => {
+    voiceListeners.delete(fn)
+  }
+}
+
+if (typeof speechSynthesis !== 'undefined' && speechSynthesis.addEventListener) {
+  speechSynthesis.addEventListener('voiceschanged', () => {
+    cachedVoices = speechSynthesis.getVoices()
+    voiceListeners.forEach(fn => fn())
+  })
+}
 
 /** 获取系统语音（iOS/Chrome 需要等待 voiceschanged） */
 export function loadSystemVoices(timeout = 2500): Promise<SpeechSynthesisVoice[]> {

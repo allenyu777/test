@@ -13,7 +13,9 @@ import {
   OPENAI_VOICES,
   langLabel,
   loadSystemVoices,
+  onVoicesChanged,
   systemVoiceOptions,
+  systemVoices,
   type VoiceOption,
 } from '../tts/voices'
 import { IconCheck, IconPlay, IconRefresh, IconStop } from './icons'
@@ -247,8 +249,27 @@ export function VoiceSheet({ meta, onClose }: { meta: BookMeta; onClose: () => v
 
   useEffect(() => {
     loadSystemVoices().then(() => setVoicesVersion(v => v + 1))
-    return stopPreview
+    const off = onVoicesChanged(() => setVoicesVersion(v => v + 1))
+    return () => {
+      off()
+      stopPreview()
+    }
   }, [])
+
+  const refreshVoices = async () => {
+    const before = systemVoices().map(v => v.voiceURI).join('|')
+    const list = await loadSystemVoices()
+    setVoicesVersion(v => v + 1)
+    const mine = systemVoiceOptions(lang)
+    const good = mine.filter(v => v.quality === 'premium' || v.quality === 'enhanced').length
+    const unchanged = list.map(v => v.voiceURI).join('|') === before
+    toast(
+      `找到 ${mine.length} 个${langLabel(lang)}声音，其中高品质 ${good} 个。` +
+        (unchanged ? '\n列表没有变化：刚下载的声音要从后台完全关闭本 App 后重新打开才会出现，必要时重启手机。' : ''),
+      'info',
+      { duration: unchanged ? 9000 : 4000 },
+    )
+  }
 
   const systemList = useMemo(() => systemVoiceOptions(allLangs ? undefined : lang), [allLangs, lang, voicesVersion])
   const azureList = useMemo(() => {
@@ -392,10 +413,14 @@ export function VoiceSheet({ meta, onClose }: { meta: BookMeta; onClose: () => v
           {systemList.map(row)}
           <div class="hint">
             <b>想要更自然的系统声音？</b>
-            <br />
-            iPhone：设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载带「增强」或「高级」标记的声音（如 婷婷、美嘉、Lilian 等），然后回来点下面的刷新。
+            <ol style={{ margin: '6px 0 0', paddingLeft: '20px' }}>
+              <li>iPhone「设置 → 辅助功能 → 朗读内容 → 声音 → 中文」，下载带「增强」或「高级」字样的声音（需要 Wi-Fi，几十到几百 MB）。</li>
+              <li>下载完成后，<b>从后台上滑完全关闭本 App 再打开</b>，新声音才会出现在上面的列表里。</li>
+              <li>在这里点选它。本 App 的声音单独设置，不跟随系统「朗读内容」里选的声音。</li>
+            </ol>
+            <div style={{ marginTop: '6px' }}>注意：Siri 的声音苹果不开放给网页和第三方 App 使用，这里不会出现，也不需要下载。</div>
             <div style={{ marginTop: '8px' }}>
-              <button class="chip" onClick={() => loadSystemVoices().then(() => setVoicesVersion(v => v + 1))}>
+              <button class="chip" onClick={refreshVoices}>
                 <IconRefresh size={14} /> 刷新声音列表
               </button>
             </div>

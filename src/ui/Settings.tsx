@@ -307,7 +307,7 @@ export function SettingsPage() {
         <div class="group-pad" style={{ fontSize: '14px', lineHeight: 1.7, color: 'var(--text-2)', paddingBottom: '14px' }}>
           <b style={{ color: 'var(--text)' }}>安装到主屏幕</b>：用 Safari 打开本页 → 分享 → 添加到主屏幕。之后从图标打开，全屏无地址栏，数据单独保存。
           <br />
-          <b style={{ color: 'var(--text)' }}>更自然的系统声音</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载「增强 / 高级」声音。
+          <b style={{ color: 'var(--text)' }}>更自然的系统声音</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载「增强 / 高级」声音；下载完要从后台完全关闭本 App 再打开，然后在播放页「声音」里选它。Siri 声音不对网页开放，无法使用。
           <br />
           <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费离线，云端识别更准更快；识别期间请让 App 保持在前台。
           <br />
