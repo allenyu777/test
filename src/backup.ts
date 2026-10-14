@@ -5,6 +5,7 @@ import * as db from './db'
 import type { BookMeta, Note } from './db'
 import { formatDate } from './notes/export'
 import { refreshLibrary } from './library'
+import { player } from './player'
 
 interface BackupManifest {
   app: 'tingshu'
@@ -44,18 +45,35 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
   const manifest = JSON.parse(strFromU8(files['backup.json'])) as BackupManifest
   if (manifest.app !== 'tingshu') throw new Error('这不是听书的备份文件')
 
-  const existing = new Map((await db.listBooks()).map(b => [b.id, b]))
-  const restored = new Set(existing.keys())
+  const localBooks = await db.listBooks()
+  const existing = new Map(localBooks.map(b => [b.id, b]))
+  // 备份里的书 id → 本机对应的书 id（重新导入的同一本书 id 不同，按文件名+大小或书名+字数匹配）
+  const idMap = new Map<string, string>()
+  const findLocal = (meta: BackupManifest['books'][number]) =>
+    existing.get(meta.id) ??
+    localBooks.find(b => b.fileName === meta.fileName && b.fileSize === meta.fileSize) ??
+    localBooks.find(b => b.title === meta.title && b.totalChars === meta.totalChars)
   let books = 0
   let skipped = 0
+  const progressUpdated: string[] = []
   for (const meta of manifest.books) {
     const cover = files[`covers/${meta.id}`]
     const contentFile = files[`contents/${meta.id}.json`]
-    const current = existing.get(meta.id)
+    const current = findLocal(meta)
     if (current) {
+      idMap.set(meta.id, current.id)
       // 已有这本书：保留较新的阅读进度
       if ((meta.lastReadAt ?? 0) > (current.lastReadAt ?? 0)) {
-        await db.updateBook(meta.id, { pos: meta.pos, percent: meta.percent, chapter: meta.chapter, lastReadAt: meta.lastReadAt, rate: meta.rate, voice: meta.voice })
+        await db.updateBook(current.id, {
+          pos: meta.pos,
+          percent: meta.percent,
+          chapter: meta.chapter,
+          lastReadAt: meta.lastReadAt,
+          rate: meta.rate,
+          voice: meta.voice,
+          finished: meta.finished,
+        })
+        progressUpdated.push(current.id)
       }
       books++
       continue
@@ -67,20 +85,35 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const content = JSON.parse(strFromU8(contentFile)) as BookContent
     const full: BookMeta = { ...meta, cover: cover ? cover.slice().buffer : null }
     await db.saveBook(full, content)
-    restored.add(meta.id)
+    idMap.set(meta.id, meta.id)
     books++
   }
 
   const types = new Map(manifest.audio.map(a => [a.id, a.type]))
   let notes = 0
-  for (const note of manifest.notes) {
-    if (!restored.has(note.bookId)) continue
+  for (const original of manifest.notes) {
+    const bookId = idMap.get(original.bookId)
+    if (!bookId) continue
+    const note: Note = { ...original, bookId }
+    // 本机上更新过的笔记不被旧备份覆盖
+    const current = await db.getNote(note.id)
+    if (current && current.updatedAt >= note.updatedAt) continue
     if (note.audioId && files[`audio/${note.audioId}`]) {
       await db.saveAudio({ id: note.audioId, data: files[`audio/${note.audioId}`].slice().buffer, type: types.get(note.audioId) ?? 'audio/mp4' })
     }
+    if (current?.audioId && current.audioId !== note.audioId) await db.deleteAudio(current.audioId)
     await db.saveNote(note)
     notes++
   }
   await refreshLibrary()
+  // 正在打开的书如果恢复了更新的进度，让播放器也跳过去
+  const loaded = player.meta
+  if (loaded && progressUpdated.includes(loaded.id) && player.state.status !== 'playing') {
+    const fresh = await db.getBook(loaded.id)
+    if (fresh) {
+      Object.assign(loaded, fresh)
+      player.seek(fresh.pos, false)
+    }
+  }
   return { books, notes, skipped }
 }

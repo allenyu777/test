@@ -7,7 +7,7 @@ import { parseMarkdown, parseTxt } from './txt'
 
 export const ACCEPT = [
   '.epub', '.mobi', '.azw3', '.azw', '.kf8', '.prc', '.pdf', '.txt', '.fb2', '.fbz', '.docx',
-  '.html', '.htm', '.xhtml', '.md', '.markdown',
+  '.html', '.htm', '.xhtml', '.md', '.markdown', '.zip',
 ].join(',')
 
 export const FORMAT_LABELS = 'EPUB、MOBI、AZW3、PDF、TXT、FB2、DOCX、HTML、Markdown'

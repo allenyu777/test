@@ -77,7 +77,12 @@ export async function importFiles(files: File[]): Promise<BookMeta[]> {
       const id = db.uid()
       const content = finalizeBook(id, parsed)
       const cover = parsed.cover ? await shrinkCover(parsed.cover) : null
-      const lang = baseLang(parsed.lang) || detectLang(content.blocks.slice(0, 200).join('\n'))
+      // 声明的语言为空、"und"，或与正文明显不符（如中文书标成 en）时，以正文识别为准
+      const detected = detectLang(content.blocks.slice(0, 200).join('\n'))
+      let lang = baseLang(parsed.lang)
+      if (!lang || ['und', 'mul', 'zxx', 'mis'].includes(lang) || (['zh', 'ja', 'ko'].includes(detected) && lang !== detected)) {
+        lang = detected
+      }
       const book = new Book(content)
       const meta: BookMeta = {
         id,

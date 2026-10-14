@@ -1,5 +1,5 @@
 // 极简状态容器 + Preact hook
-import { useEffect, useReducer, useRef } from 'preact/hooks'
+import { useLayoutEffect, useReducer, useRef } from 'preact/hooks'
 
 export interface Store<T> {
   get(): T
@@ -34,16 +34,18 @@ export function useStore<T extends object, S>(store: Store<T>, selector: (state:
   const value = selector(store.get())
   const valueRef = useRef(value)
   valueRef.current = value
-  useEffect(
-    () =>
-      store.subscribe(() => {
-        const next = selectorRef.current(store.get())
-        if (!Object.is(next, valueRef.current)) {
-          valueRef.current = next
-          force(0)
-        }
-      }),
-    [store],
-  )
+  useLayoutEffect(() => {
+    const check = () => {
+      const next = selectorRef.current(store.get())
+      if (!Object.is(next, valueRef.current)) {
+        valueRef.current = next
+        force(0)
+      }
+    }
+    const unsubscribe = store.subscribe(check)
+    // 渲染之后、订阅之前 store 可能已经变了（例如书架数据刚好读完），补检查一次
+    check()
+    return unsubscribe
+  }, [store])
   return value
 }

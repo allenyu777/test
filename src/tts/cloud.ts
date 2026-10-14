@@ -138,6 +138,8 @@ export class CloudEngine implements Engine {
   private userPaused = false
   private lastIndex = -1
   private currentUrl: string | null = null
+  /** 当前片段的音频是否已经放进 <audio>（下一段还在下载时为 false） */
+  private attached = false
   private cache = new Map<string, Promise<Blob>>()
 
   constructor(
@@ -190,6 +192,7 @@ export class CloudEngine implements Engine {
   private async playNext(gen: number) {
     if (gen !== this.gen) return
     const item = this.pending.shift()
+    if (item) this.attached = false
     if (!item) {
       if (this.exhausted) {
         this.active = false
@@ -228,6 +231,7 @@ export class CloudEngine implements Engine {
       if (gen === this.gen && !this.userPaused && !audio.ended && this.active) this.callbacks?.onPausedExternally?.()
     }
     audio.src = url
+    this.attached = true
     audio.defaultPlaybackRate = rate
     audio.playbackRate = rate
     if (this.userPaused) return
@@ -286,11 +290,20 @@ export class CloudEngine implements Engine {
   }
 
   resume() {
-    if (!this.active || !this.currentUrl) return false
-    this.userPaused = false
     const audio = mainAudio()
+    // <audio> 被别处（如设置页试听）占用过，或当前片段已经播完，就不能原地继续
+    if (!this.active || !this.currentUrl) return false
+    if (this.attached && audio.src !== this.currentUrl) return false
+    this.userPaused = false
+    // 下一段还在下载：下载完成后 playNext 会自动开始播放
+    if (!this.attached) return true
     audio.playbackRate = this.options?.rate ?? 1
-    audio.play().catch(() => this.callbacks?.onError('音频播放失败，请重试'))
+    const gen = this.gen
+    audio.play().catch((e: unknown) => {
+      if (gen !== this.gen || (e as DOMException)?.name === 'AbortError') return
+      this.active = false
+      this.callbacks?.onError('音频播放失败，请重试')
+    })
     return true
   }
 

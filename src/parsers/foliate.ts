@@ -23,14 +23,19 @@ function langString(value: unknown): string {
   return String(value)
 }
 
-async function loadDocument(section: FoliateBook['sections'][number]): Promise<Document | null> {
+async function loadDocument(
+  section: FoliateBook['sections'][number],
+  loadRaw?: (section: FoliateBook['sections'][number]) => string | null,
+): Promise<Document | null> {
   try {
     const doc = await section.createDocument()
     if (doc && !hasParserError(doc)) return doc
   } catch {
     // 继续尝试下面的兜底方式
   }
-  // XHTML 不规范时，退回到宽松的 HTML 解析
+  // XHTML 不规范时，退回到宽松的 HTML 解析：优先直接读原文
+  const raw = loadRaw?.(section)
+  if (raw) return new DOMParser().parseFromString(raw, 'text/html')
   try {
     const url = await section.load?.()
     if (!url) return null
@@ -38,10 +43,17 @@ async function loadDocument(section: FoliateBook['sections'][number]): Promise<D
     return new DOMParser().parseFromString(text, 'text/html')
   } catch {
     return null
+  } finally {
+    ;(section as { unload?: () => void }).unload?.()
   }
 }
 
-export async function extractFoliateBook(book: FoliateBook, fallbackTitle: string, onProgress?: Progress): Promise<ParsedBook> {
+export async function extractFoliateBook(
+  book: FoliateBook,
+  fallbackTitle: string,
+  onProgress?: Progress,
+  loadRaw?: (section: FoliateBook['sections'][number]) => string | null,
+): Promise<ParsedBook> {
   // 展平目录
   const flat: { title: string; href: string; level: number; order: number }[] = []
   const walk = (items: FoliateTocItem[] | null | undefined, level: number) => {
@@ -73,7 +85,7 @@ export async function extractFoliateBook(book: FoliateBook, fallbackTitle: strin
     const targets = bySection.get(i) ?? []
     if (section.linear === 'no' && !targets.length) continue
     const start = builder.length
-    const doc = await loadDocument(section)
+    const doc = await loadDocument(section, loadRaw)
     if (!doc) continue
     const marks = new Map<Element, number>()
     const anchored = targets.map(({ entry, anchor }) => {
@@ -121,8 +133,27 @@ export async function extractFoliateBook(book: FoliateBook, fallbackTitle: strin
 
 const MEDIA_RE = /\.(jpe?g|png|gif|webp|bmp|svg|ttf|otf|woff2?|mp3|m4a|mp4|ogg|oga|wav|webm|avif|tiff?)$/i
 
+/** 没有 UTF-8 标记的 ZIP，fflate 按单字节解码文件名；还原成 UTF-8 或 GBK */
+function redecodeName(name: string): string | null {
+  if (!/[\x80-\xff]/.test(name) || /[^\x00-\xff]/.test(name)) return null
+  const raw = Uint8Array.from(name, c => c.charCodeAt(0))
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(raw)
+  } catch {
+    try {
+      return new TextDecoder('gb18030').decode(raw)
+    } catch {
+      return null
+    }
+  }
+}
+
 function zipLoader(data: Uint8Array) {
   const files = unzipSync(data, { filter: f => !MEDIA_RE.test(f.name) })
+  for (const key of Object.keys(files)) {
+    const alt = redecodeName(key)
+    if (alt && !files[alt]) files[alt] = files[key]
+  }
   const find = (name: string): Uint8Array | undefined => {
     if (files[name]) return files[name]
     try {
@@ -145,7 +176,9 @@ function zipLoader(data: Uint8Array) {
     } catch {
       decoded = name
     }
-    const extra = unzipSync(data, { filter: f => f.name === name || f.name === decoded })
+    const extra = unzipSync(data, {
+      filter: f => f.name === name || f.name === decoded || redecodeName(f.name) === decoded,
+    })
     return Object.values(extra)[0]
   }
   return {
@@ -167,8 +200,19 @@ export async function parseEpub(buffer: ArrayBuffer, fallbackTitle: string, onPr
   const { EPUB } = await import('foliate-js/epub.js')
   const loader = zipLoader(new Uint8Array(buffer))
   if (!loader.files['META-INF/container.xml']) throw new Error('这不是有效的 EPUB 文件')
-  const book = await new EPUB(loader).init()
-  return extractFoliateBook(book, fallbackTitle, onProgress)
+  // 字体去混淆需要 SHA-1；非 HTTPS 环境没有 crypto.subtle，返回空值避免整本书导入失败
+  const sha1 = async (str: string) =>
+    globalThis.crypto?.subtle
+      ? new Uint8Array(await crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)))
+      : new Uint8Array(20)
+  const book = await new EPUB({ ...loader, sha1 }).init()
+  try {
+    return await extractFoliateBook(book, fallbackTitle, onProgress, section =>
+      typeof section.id === 'string' ? loader.loadText(section.id) : null,
+    )
+  } finally {
+    book.destroy?.()
+  }
 }
 
 export async function parseMobi(file: Blob, fallbackTitle: string, onProgress?: Progress): Promise<ParsedBook> {

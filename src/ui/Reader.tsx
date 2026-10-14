@@ -1,4 +1,3 @@
-import { memo } from 'preact/compat'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Book, Pos } from '../core/book'
 import * as db from '../db'
@@ -82,7 +81,8 @@ export function Reader({ id }: { id: string }) {
   return <ReaderView key={id} meta={state.meta} book={state.book} />
 }
 
-const SectionView = memo(function SectionView({ book, index, notesMap }: { book: Book; index: number; notesMap: Map<string, Note[]> }) {
+// 注意：不要引入 preact/compat，它会把 onChange 改成 input 事件，导致拖动进度条时不停跳转
+function SectionView({ book, index, notesMap }: { book: Book; index: number; notesMap: Map<string, Note[]> }) {
   const { start, end } = book.sections[index]
   const out = []
   for (let b = start; b < end; b++) {
@@ -113,7 +113,7 @@ const SectionView = memo(function SectionView({ book, index, notesMap }: { book:
     )
   }
   return <>{out}</>
-})
+}
 
 function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   const fontSize = useStore(settings, s => s.fontSize)
@@ -200,7 +200,11 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
         if (auto) {
           pendingScroll.current = 'center'
           setSection(target)
-        } else updateLocate()
+        } else {
+          // 不自动翻页时，清掉旧高亮，显示"回到朗读位置"
+          applyHighlight('none')
+          updateLocate()
+        }
         return
       }
       applyHighlight(auto ? 'follow' : 'none')
@@ -220,7 +224,13 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   }, [section])
 
   // 笔记变化会重绘句子，重新加上高亮
-  useEffect(() => applyHighlight('none'), [notesMap, fontSize, lineHeight, font])
+  useEffect(() => applyHighlight('none'), [notesMap])
+
+  // 调整字号/行距/字体后，重新把朗读位置放回视野
+  useLayoutEffect(() => {
+    applyHighlight(followingRef.current ? 'center' : 'none')
+    updateLocate()
+  }, [fontSize, lineHeight, font])
 
   // 用户手动滚动时暂停跟随
   useEffect(() => {
@@ -312,6 +322,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     })
   }
 
+  const sectionView = useMemo(() => <SectionView book={book} index={section} notesMap={notesMap} />, [book, section, notesMap])
   const sec = book.sections[section]
   const prevSec = section > 0 ? book.sections[section - 1] : null
   const nextSec = section < book.sections.length - 1 ? book.sections[section + 1] : null
@@ -363,7 +374,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
             </button>
           </div>
         )}
-        <SectionView book={book} index={section} notesMap={notesMap} />
+        {sectionView}
         <div class="section-nav" style={{ marginTop: '32px' }}>
           {nextSec ? (
             <button onClick={() => goSection(section + 1)}>
