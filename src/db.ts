@@ -22,6 +22,28 @@ export interface BookMeta {
   voice?: VoiceChoice | null
   rate?: number | null
   finished?: boolean
+  /** 扫描版 PDF 的文字识别进度 */
+  ocr?: OcrInfo | null
+}
+
+export type OcrEngine = 'local' | 'cloud'
+export type OcrLang = 'chi_sim' | 'chi_tra' | 'eng' | 'chi_sim+eng'
+
+export interface OcrInfo {
+  pages: number
+  done: number
+  engine: OcrEngine
+  lang: OcrLang
+  status: 'running' | 'paused' | 'done' | 'error'
+  error?: string
+}
+
+/** 原始文件（扫描版 PDF 识别过程中需要） */
+export interface FileRecord {
+  id: string
+  data: ArrayBuffer
+  type: string
+  name: string
 }
 
 export interface Note {
@@ -50,13 +72,14 @@ interface Schema extends DBSchema {
   contents: { key: string; value: BookContent }
   notes: { key: string; value: Note; indexes: { bookId: string } }
   audio: { key: string; value: AudioRecord }
+  files: { key: string; value: FileRecord }
 }
 
 let dbPromise: Promise<IDBPDatabase<Schema>> | null = null
 
 function db() {
   if (!dbPromise) {
-    dbPromise = openDB<Schema>('tingshu', 1, {
+    dbPromise = openDB<Schema>('tingshu', 2, {
       // iOS 在后台可能关闭数据库连接；下次使用时重新打开
       terminated() {
         dbPromise = null
@@ -65,12 +88,15 @@ function db() {
         dbPromise?.then(d => d.close())
         dbPromise = null
       },
-      upgrade(database) {
-        database.createObjectStore('books', { keyPath: 'id' })
-        database.createObjectStore('contents', { keyPath: 'id' })
-        const notes = database.createObjectStore('notes', { keyPath: 'id' })
-        notes.createIndex('bookId', 'bookId')
-        database.createObjectStore('audio', { keyPath: 'id' })
+      upgrade(database, oldVersion) {
+        if (oldVersion < 1) {
+          database.createObjectStore('books', { keyPath: 'id' })
+          database.createObjectStore('contents', { keyPath: 'id' })
+          const notes = database.createObjectStore('notes', { keyPath: 'id' })
+          notes.createIndex('bookId', 'bookId')
+          database.createObjectStore('audio', { keyPath: 'id' })
+        }
+        if (oldVersion < 2) database.createObjectStore('files', { keyPath: 'id' })
       },
     })
   }
@@ -118,6 +144,10 @@ export async function updateBook(id: string, patch: Partial<BookMeta>) {
   }
 }
 
+export async function saveContent(content: BookContent) {
+  await (await db()).put('contents', content)
+}
+
 export async function getContent(id: string) {
   return (await db()).get('contents', id)
 }
@@ -125,14 +155,27 @@ export async function getContent(id: string) {
 export async function deleteBook(id: string) {
   const d = await db()
   const notes = await d.getAllFromIndex('notes', 'bookId', id)
-  const tx = d.transaction(['books', 'contents', 'notes', 'audio'], 'readwrite')
+  const tx = d.transaction(['books', 'contents', 'notes', 'audio', 'files'], 'readwrite')
   await tx.objectStore('books').delete(id)
   await tx.objectStore('contents').delete(id)
+  await tx.objectStore('files').delete(id)
   for (const n of notes) {
     await tx.objectStore('notes').delete(n.id)
     if (n.audioId) await tx.objectStore('audio').delete(n.audioId)
   }
   await tx.done
+}
+
+export async function saveFile(record: FileRecord) {
+  await (await db()).put('files', record)
+}
+
+export async function getFile(id: string) {
+  return (await db()).get('files', id)
+}
+
+export async function deleteFile(id: string) {
+  await (await db()).delete('files', id)
 }
 
 export async function listNotes(bookId: string): Promise<Note[]> {

@@ -4,6 +4,7 @@ import './styles.css'
 import { App } from './app'
 import { requestPersistence } from './db'
 import { refreshLibrary } from './library'
+import { ocrRunner } from './ocr/runner'
 import { toast } from './ui/toast'
 
 let notifyUpdate: ((apply: () => void) => void) | null = null
@@ -55,10 +56,13 @@ render(
   document.getElementById('app')!,
 )
 
-refreshLibrary().catch(e => {
-  console.error(e)
-  toast('无法打开本地数据库：' + (e instanceof Error ? e.message : String(e)), 'error', { duration: 0 })
-})
+refreshLibrary()
+  // 继续之前没识别完的扫描版 PDF
+  .then(() => ocrRunner.resumeAll())
+  .catch(e => {
+    console.error(e)
+    toast('无法打开本地数据库：' + (e instanceof Error ? e.message : String(e)), 'error', { duration: 0 })
+  })
 registerServiceWorker()
 // 已添加到主屏幕时申请持久化存储
 if (window.matchMedia?.('(display-mode: standalone)').matches) requestPersistence()

@@ -26,6 +26,13 @@ export function normalizeText(text: string): string {
     .trim()
 }
 
+const cjkSpaceRe = new RegExp(`([${CJK}${CJK_PUNCT}])[ \\t]+(?=[${CJK}${CJK_PUNCT}])`, 'g')
+
+/** 去掉中文字符之间的空格（文字识别结果常见"中 文 字"） */
+export function removeCjkSpaces(text: string): string {
+  return text.replace(cjkSpaceRe, '$1')
+}
+
 /** 是否包含可以朗读的字符（过滤 "* * *" 之类的分隔符） */
 export function isSpeakable(text: string): boolean {
   return speakableRe.test(text)

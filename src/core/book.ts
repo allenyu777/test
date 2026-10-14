@@ -39,6 +39,8 @@ export interface BookContent {
   heads: Record<number, number>
   toc: TocEntry[]
   sections: SectionRange[]
+  /** PDF：每一页第一个段落的序号（扫描版逐页识别时使用） */
+  pages?: number[]
 }
 
 export class BookBuilder {
@@ -147,23 +149,52 @@ export function finalizeBook(id: string, parsed: ParsedBook): BookContent {
 
 /** 运行时的书籍对象：提供位置换算、分句缓存、前后句导航 */
 export class Book {
-  readonly blocks: string[]
-  readonly toc: TocEntry[]
-  readonly sections: SectionRange[]
-  readonly heads: Record<number, number>
+  blocks!: string[]
+  toc!: TocEntry[]
+  sections!: SectionRange[]
+  heads!: Record<number, number>
+  pages?: number[]
   /** cum[i] = 第 i 段之前的总字数 */
-  readonly cum: Float64Array
-  readonly totalChars: number
+  cum!: Float64Array
+  totalChars!: number
   private cache = new Map<number, Sentence[]>()
 
   constructor(content: BookContent) {
+    this.replace(content)
+  }
+
+  /**
+   * 换成新的正文（扫描版 PDF 识别出新页面后调用）。
+   * 只允许在末尾追加段落，已有段落不变，因此阅读位置和笔记仍然有效。
+   */
+  replace(content: BookContent) {
+    // 以累计字数表的长度为准（调用方可能已经往同一个数组里追加了段落）
+    const oldLength = this.cum ? this.cum.length - 1 : 0
     this.blocks = content.blocks
     this.toc = content.toc
     this.sections = content.sections
     this.heads = content.heads
-    this.cum = new Float64Array(this.blocks.length + 1)
-    for (let i = 0; i < this.blocks.length; i++) this.cum[i + 1] = this.cum[i] + this.blocks[i].length
-    this.totalChars = this.cum[this.blocks.length]
+    this.pages = content.pages
+    const cum = new Float64Array(this.blocks.length + 1)
+    const keep = this.cum && oldLength <= this.blocks.length ? oldLength : 0
+    if (keep) cum.set(this.cum.subarray(0, keep + 1))
+    for (let i = keep; i < this.blocks.length; i++) cum[i + 1] = cum[i] + this.blocks[i].length
+    this.cum = cum
+    this.totalChars = cum[this.blocks.length]
+  }
+
+  /** 段落所在的 PDF 页码（从 1 开始）；不是 PDF 时返回 0 */
+  pageOf(b: number): number {
+    const pages = this.pages
+    if (!pages?.length) return 0
+    let lo = 0
+    let hi = pages.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (pages[mid] <= b) lo = mid
+      else hi = mid - 1
+    }
+    return lo + 1
   }
 
   sentences(b: number): Sentence[] {

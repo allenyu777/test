@@ -184,6 +184,10 @@ export function SettingsPage() {
             />
           </div>
           <div class="field">
+            <label>识别模型（扫描版 PDF 云端识别用，需支持看图）</label>
+            <input class="input" value={s.openai.visionModel} onInput={e => setOpenai({ visionModel: (e.target as HTMLInputElement).value.trim() })} />
+          </div>
+          <div class="field">
             <button class="btn small" disabled={!s.openai.baseUrl} onClick={() => testVoice('openai', s)}>
               <IconPlay size={16} /> 测试并试听
             </button>
@@ -305,6 +309,8 @@ export function SettingsPage() {
           <br />
           <b style={{ color: 'var(--text)' }}>更自然的系统声音</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载「增强 / 高级」声音。
           <br />
+          <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费离线，云端识别更准更快；识别期间请让 App 保持在前台。
+          <br />
           <b style={{ color: 'var(--text)' }}>做笔记</b>：在正文点一下句子，选「笔记」或「语音」；播放时可直接点底部「语音笔记」。
           <br />
           <b style={{ color: 'var(--text)' }}>快速定位</b>：滚动离开朗读位置后，右下角会出现「回到朗读位置」。
@@ -313,7 +319,7 @@ export function SettingsPage() {
         </div>
       </div>
       <div class="about">
-        听书 v1.0 · 电子书解析使用 foliate-js（MIT）与 pdf.js（Apache-2.0）
+        听书 v1.1 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}

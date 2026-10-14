@@ -1,9 +1,10 @@
 // 书架：导入、删除、加载书籍
-import { Book, finalizeBook } from './core/book'
+import { Book, finalizeBook, type BookContent } from './core/book'
 import { baseLang, detectLang } from './core/text'
 import * as db from './db'
 import type { BookMeta } from './db'
 import { parseFile } from './parsers'
+import { ScannedPdfError } from './parsers/pdf'
 import { createStore } from './store'
 
 export interface ImportState {
@@ -62,7 +63,19 @@ async function shrinkCover(blob: Blob): Promise<{ data: ArrayBuffer; type: strin
   }
 }
 
-export async function importFiles(files: File[]): Promise<BookMeta[]> {
+export interface ImportOptions {
+  /**
+   * 遇到扫描版 PDF 时调用：询问用户并开始文字识别，返回新建的书；返回 null 表示跳过。
+   * setProgress 用来更新导入进度提示。
+   */
+  onScanned?: (
+    file: File,
+    scanned: ScannedPdfError,
+    setProgress: (progress: number, message: string) => void,
+  ) => Promise<BookMeta | null>
+}
+
+export async function importFiles(files: File[], options: ImportOptions = {}): Promise<BookMeta[]> {
   const added: BookMeta[] = []
   const errors: string[] = []
   for (let i = 0; i < files.length; i++) {
@@ -105,6 +118,20 @@ export async function importFiles(files: File[]): Promise<BookMeta[]> {
       await db.saveBook(meta, content)
       added.push(meta)
     } catch (e) {
+      if (e instanceof ScannedPdfError && options.onScanned) {
+        try {
+          // 先收起导入进度，让用户选择识别方式
+          library.set({ importing: null })
+          const meta = await options.onScanned(file, e, (progress, message) =>
+            library.set({ importing: { ...base, progress, message } }),
+          )
+          if (meta) added.push(meta)
+        } catch (err) {
+          console.error(err)
+          errors.push(`${file.name}：${err instanceof Error ? err.message : '识别失败'}`)
+        }
+        continue
+      }
       console.error(e)
       errors.push(`${file.name}：${e instanceof Error ? e.message : '解析失败'}`)
     }
@@ -133,6 +160,21 @@ export async function loadBook(id: string): Promise<{ meta: BookMeta; book: Book
   if (!meta || !content) return null
   cached = { meta, book: new Book(content) }
   return cached
+}
+
+/** 扫描版识别出新页面后，更新已加载的书（阅读页和播放器用的是同一个 Book 对象） */
+export function extendLoadedBook(id: string, content: BookContent) {
+  if (cached?.meta.id !== id) return
+  cached.book.replace({
+    ...content,
+    blocks: content.blocks.slice(),
+    heads: { ...content.heads },
+    toc: content.toc.slice(),
+    sections: content.sections.slice(),
+    pages: content.pages?.slice(),
+  })
+  const fresh = library.get().books.find(b => b.id === id)
+  if (fresh) cached.meta = fresh
 }
 
 const coverUrls = new Map<string, string>()

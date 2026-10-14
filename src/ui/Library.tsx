@@ -5,10 +5,13 @@ import * as db from '../db'
 import { importFiles, library, loadBook, removeBook, updateBookMeta } from '../library'
 import { buildNotesFile } from '../notes/export'
 import { ACCEPT, FORMAT_LABELS } from '../parsers'
+import { createScannedBook, type ScanChoice } from '../ocr/importScanned'
+import { ocrRunner } from '../ocr/runner'
 import { player } from '../player'
 import { settings, updateSettings } from '../settings'
 import { useStore } from '../store'
 import { Cover } from './Cover'
+import { ScanSheet } from './ScanSheet'
 import { ExportReady } from './ExportSheet'
 import {
   IconBook,
@@ -38,7 +41,17 @@ function timeAgo(ts: number): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
+function ocrLabel(meta: BookMeta): string | null {
+  const ocr = meta.ocr
+  if (!ocr || ocr.status === 'done') return null
+  if (ocr.status === 'paused') return `识别已暂停 ${ocr.done}/${ocr.pages} 页`
+  if (ocr.status === 'error') return '识别出错'
+  return `识别中 ${ocr.done}/${ocr.pages} 页`
+}
+
 function percentLabel(meta: BookMeta) {
+  const ocr = ocrLabel(meta)
+  if (ocr) return ocr
   if (meta.finished) return '已读完'
   if (!meta.lastReadAt) return '未开始'
   return `${meta.percent < 10 ? meta.percent.toFixed(1) : Math.floor(meta.percent)}%`
@@ -53,6 +66,7 @@ export function Library() {
   const [query, setQuery] = useState('')
   const [menu, setMenu] = useState<BookMeta | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [scanAsk, setScanAsk] = useState<{ file: File; pages: number; resolve: (c: ScanChoice | null) => void } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const sorted = useMemo(() => {
@@ -87,7 +101,13 @@ export function Library() {
     const list = Array.from(files ?? [])
     if (!list.length) return
     try {
-      const added = await importFiles(list)
+      const added = await importFiles(list, {
+        // 扫描版 PDF：问用户用哪种方式识别文字
+        onScanned: (file, scanned, setProgress) =>
+          new Promise<ScanChoice | null>(resolve => setScanAsk({ file, pages: scanned.pages, resolve })).then(choice =>
+            choice ? createScannedBook(file, scanned, choice, setProgress) : null,
+          ),
+      })
       if (added.length === 1) toast(`已导入《${added[0].title}》`, 'success')
       else if (added.length) toast(`已导入 ${added.length} 本书`, 'success')
     } catch (e) {
@@ -292,6 +312,16 @@ export function Library() {
       <MiniPlayer />
 
       {menu && <BookMenu meta={menu} onClose={() => setMenu(null)} />}
+      {scanAsk && (
+        <ScanSheet
+          name={scanAsk.file.name}
+          pages={scanAsk.pages}
+          onDone={choice => {
+            scanAsk.resolve(choice)
+            setScanAsk(null)
+          }}
+        />
+      )}
 
       {importing && (
         <div class="import-overlay">
@@ -439,6 +469,7 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
   }
 
   const progressAction = meta.finished || meta.percent > 0
+  const ocr = meta.ocr && meta.ocr.status !== 'done' ? meta.ocr : null
   return (
     <Sheet title={meta.title} onClose={onClose} class="action-sheet">
       <div class="muted small" style={{ marginBottom: '12px' }}>
@@ -448,6 +479,18 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
         <button class="option" onClick={() => navigate(`#/book/${meta.id}`)}>
           <IconBook size={20} /> 打开
         </button>
+        {ocr && (
+          <button
+            class="option"
+            onClick={async () => {
+              if (ocr.status === 'running') await ocrRunner.pause(meta.id)
+              else await ocrRunner.resume(meta.id)
+              onClose()
+            }}
+          >
+            {ocr.status === 'running' ? '暂停文字识别' : '继续文字识别'}（{ocr.done}/{ocr.pages} 页）
+          </button>
+        )}
         <button class="option" onClick={() => setMode('rename')}>
           编辑书名和作者
         </button>
