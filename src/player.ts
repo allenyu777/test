@@ -2,7 +2,7 @@
 import { Book, type Pos } from './core/book'
 import { cjkRatio, isSpeakable, speechText } from './core/text'
 import * as db from './db'
-import type { BookMeta } from './db'
+import type { BookMeta, ChapterMark } from './db'
 import { coverUrl, library, patchBookLocal } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
@@ -33,6 +33,9 @@ export interface PlayerState {
   percent: number
   chapter: string
 }
+
+// 在一章里往回移动后，原来读到的位置先保留这么久：点错了马上点回来，还能接着原来的地方读
+const HOLD_MS = 90_000
 
 const END_PUNCT = /[。！？.!?；;…：:”"」』）)]$/
 
@@ -141,6 +144,7 @@ class Player {
     const pos = book.clamp(meta.pos)
     const s = settings.get()
     const rate = (s.perBookRate && meta.rate) || s.rate
+    this.rememberChapter(pos, meta.lastReadAt || Date.now())
     this.store.set({
       bookId: meta.id,
       status: 'idle',
@@ -256,8 +260,100 @@ class Player {
       toast('已经是最后一章')
       return
     }
-    const p = book.speakableFrom({ b: target, o: 0 }) ?? { b: target, o: 0 }
+    // 回到本章开头就从头读（可以一键回到刚才的位置）；换到别的章节时，读过一部分的接着上次的位置读
+    if (target === book.chapterRange(pos.b).start) {
+      const back = this.chapterResume(target)
+      this.seek(book.speakableFrom({ b: target, o: 0 }) ?? { b: target, o: 0 })
+      if (back) toast('从本章开头读', 'info', { duration: 5000, action: { label: '回到刚才的位置', run: () => this.seek(back) } })
+      return
+    }
+    const { pos: p, resumed, start } = this.chapterTarget(target)
     this.seek(p)
+    if (resumed) this.toastResumed(p, () => this.seek(start))
+  }
+
+  /** 这一章上次读到的位置；没读过、离开头很近或已经读完返回 null */
+  chapterResume(b: number): Pos | null {
+    const book = this.book
+    const marks = this.meta?.chapterPos
+    if (!book || !marks || !book.blocks.length) return null
+    const range = book.chapterRange(Math.min(b, book.blocks.length - 1))
+    const best = this.chapterMark(range)?.[1]
+    if (!best) return null
+    const pos = book.clamp(best)
+    if (book.charsBetween(range.start, pos.b) + pos.o < 30) return null
+    // 已经读到本章最后一句
+    const next = book.next(pos)
+    if (!next || next.b >= range.end) return null
+    return pos
+  }
+
+  /** 跳到某一章的位置：读过一部分就从上次的位置接着读，fromStart 时从头读 */
+  chapterTarget(b: number, fromStart = false): { pos: Pos; start: Pos; resumed: boolean } {
+    const book = this.book!
+    const start = book.speakableFrom({ b, o: 0 }) ?? book.clamp({ b, o: 0 })
+    const resume = fromStart ? null : this.chapterResume(b)
+    return resume ? { pos: resume, start, resumed: true } : { pos: start, start, resumed: false }
+  }
+
+  /** 位置在本章中的进度百分比 */
+  chapterPercent(pos: Pos): number {
+    const book = this.book
+    if (!book) return 0
+    const range = book.chapterRange(pos.b)
+    const total = Math.max(1, book.charsBetween(range.start, range.end))
+    return Math.min(100, ((book.charsBetween(range.start, pos.b) + pos.o) / total) * 100)
+  }
+
+  /** 提示"接着上次的位置读"，可以一键改为从头读 */
+  toastResumed(pos: Pos, fromStart: () => void) {
+    toast(`接着本章上次的位置读（已读 ${Math.floor(this.chapterPercent(pos))}%）`, 'info', {
+      duration: 5000,
+      action: { label: '从头读', run: fromStart },
+    })
+  }
+
+  /** 某一章范围内记下的位置（扫描版目录重建后可能留在旧的键下，取最新的） */
+  private chapterMark(range: { start: number; end: number }): [string, ChapterMark] | null {
+    let best: [string, ChapterMark] | null = null
+    for (const [key, m] of Object.entries(this.meta?.chapterPos ?? {})) {
+      if (m.b >= range.start && m.b < range.end && (!best || m.t > best[1].t)) best = [key, m]
+    }
+    return best
+  }
+
+  /**
+   * 记下当前位置所在章节读到哪里（每章只留一个位置）。
+   * 位置往回移动时（点错章节后连续读进了这一章、"上一章"回到本章开头等），原来读到的位置先保留一会儿，
+   * 这期间点回这一章还能接着原来的地方读；真的往回重听，过一会儿位置就跟上来了。
+   */
+  private rememberChapter(pos: Pos, at = Date.now()) {
+    const book = this.book
+    const meta = this.meta
+    if (!book || !meta || !book.blocks.length) return
+    const range = book.chapterRange(Math.min(pos.b, book.blocks.length - 1))
+    const marks = (meta.chapterPos ??= {})
+    const found = this.chapterMark(range)
+    for (const [key, m] of Object.entries(marks)) {
+      if (m.b >= range.start && m.b < range.end && key !== String(range.start)) delete marks[key]
+    }
+    const mark = found?.[1]
+    if (mark && book.charOffset(pos) < book.charOffset(book.clamp(mark))) {
+      if (mark.h == null) {
+        marks[range.start] = { ...mark, h: at }
+        return
+      }
+      if (at - mark.h < HOLD_MS) {
+        marks[range.start] = mark
+        return
+      }
+    }
+    marks[range.start] = { b: pos.b, o: pos.o, t: at }
+  }
+
+  /** 清除各章节记下的位置（"从头开始"时） */
+  clearChapterMarks(bookId: string) {
+    if (this.meta?.id === bookId) this.meta.chapterPos = {}
   }
 
   setRate(rate: number) {
@@ -418,6 +514,14 @@ class Player {
       this.sleepNow()
       return
     }
+    // 连续朗读进入了下一章：上一章读完了，以后再点它从头读
+    const book = this.book
+    if (book && this.meta?.chapterPos) {
+      const prev = book.chapterRange(this.state.pos.b)
+      if (pos.b >= prev.end && book.chapterRange(pos.b).start === prev.end) {
+        for (const [key, m] of Object.entries(this.meta.chapterPos)) if (m.b >= prev.start && m.b < prev.end) delete this.meta.chapterPos[key]
+      }
+    }
     const sleep = this.state.sleep
     if (sleep.mode === 'minutes' && sleep.endsAt && Date.now() >= sleep.endsAt) {
       this.sleepNow()
@@ -533,6 +637,7 @@ class Player {
     if (!book) return
     const chapter = book.chapterTitle(pos.b)
     const changedChapter = chapter !== this.state.chapter
+    this.rememberChapter(pos)
     this.store.set({ pos, percent: this.percentOf(pos), chapter })
     if (changedChapter) this.updateMetadata()
   }
@@ -575,7 +680,7 @@ class Player {
     const book = this.book
     if (!meta || !book) return
     const { pos, percent, chapter } = this.state
-    const patch: Partial<BookMeta> = { pos, percent, chapter, lastReadAt: Date.now() }
+    const patch: Partial<BookMeta> = { pos, percent, chapter, lastReadAt: Date.now(), chapterPos: { ...meta.chapterPos } }
     if (meta.finished && percent < 99) patch.finished = false
     Object.assign(meta, patch)
     patchBookLocal(meta.id, patch)

@@ -40,6 +40,18 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
 }
 
 /** 按笔记引用的原文，在本机这本书里找到对应位置（找不到就保持原位） */
+/**
+ * 备份里的进度较新时，以备份里各章节的位置为准（备份那台设备读完的章节已经删掉了位置）；
+ * 本机只保留比备份更新的位置。
+ */
+function mergeChapterPos(local: BookMeta['chapterPos'], backup: BookMeta['chapterPos'], backupAt: number): BookMeta['chapterPos'] {
+  const merged = { ...backup }
+  for (const [key, mark] of Object.entries(local ?? {})) {
+    if (mark.t > backupAt && (!merged[key] || merged[key].t < mark.t)) merged[key] = mark
+  }
+  return merged
+}
+
 /** 按笔记引用的原文在书里找位置（离原位置最近的那处） */
 function findQuote(book: Book, note: Note): Pick<Note, 'b' | 'o'> | null {
   const needle = note.quote.slice(0, 40)
@@ -166,6 +178,8 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
           rate: meta.rate,
           voice: meta.voice,
           finished: meta.finished,
+          // 同一本书（段落号一致）才合并各章节读到的位置，每章保留较新的
+          ...(current.id === meta.id ? { chapterPos: mergeChapterPos(current.chapterPos, meta.chapterPos, meta.lastReadAt ?? 0) } : {}),
         })
         progressUpdated.push(current.id)
       }

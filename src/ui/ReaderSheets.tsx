@@ -11,6 +11,9 @@ import {
   AZURE_VOICES,
   ENGINE_LABELS,
   OPENAI_VOICES,
+  autoVoiceName,
+  autoVoiceOptions,
+  isIOS,
   langLabel,
   loadSystemVoices,
   onVoicesChanged,
@@ -24,28 +27,53 @@ import { Sheet, Switch } from './Sheet'
 import { toast } from './toast'
 
 /* ---------- 目录 ---------- */
-export function TocSheet({ book, onClose, onJump }: { book: Book; onClose: () => void; onJump: (b: number) => void }) {
+export function TocSheet({
+  book,
+  onClose,
+  onJump,
+}: {
+  book: Book
+  onClose: () => void
+  /** fromStart：从这一章开头读（否则读过一部分的章节接着上次的位置读） */
+  onJump: (b: number, fromStart?: boolean) => void
+}) {
   const pos = useStore(player.store, s => s.pos)
   const current = book.tocIndex(pos.b)
   const listRef = useRef<HTMLDivElement>(null)
+  // 每一章上次读到的位置
+  const resumes = useMemo(() => book.toc.map(t => player.chapterResume(t.b)), [book])
   useLayoutEffect(() => {
     listRef.current?.querySelector('.current')?.scrollIntoView({ block: 'center' })
   }, [])
   return (
     <Sheet title={`目录 · ${book.toc.length}`} onClose={onClose}>
       {!book.toc.length && <div class="muted">这本书没有目录</div>}
+      {resumes.some(Boolean) && <div class="hint small">读过一部分的章节，点一下会接着上次的位置读；点「从头」从这一章开头读。</div>}
       <div ref={listRef}>
-        {book.toc.map((t, i) => (
-          <button
-            key={i}
-            class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
-            style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
-            onClick={() => onJump(t.b)}
-          >
-            <span>{t.title}</span>
-            <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
-          </button>
-        ))}
+        {book.toc.map((t, i) => {
+          const resume = resumes[i]
+          return (
+            <div class="toc-row" key={i}>
+              <button
+                class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
+                style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
+                onClick={() => onJump(t.b)}
+              >
+                <span>{t.title}</span>
+                {resume ? (
+                  <span class="pct resume">读到 {Math.floor(player.chapterPercent(resume))}%</span>
+                ) : (
+                  <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
+                )}
+              </button>
+              {resume && (
+                <button class="toc-restart" onClick={() => onJump(t.b, true)} aria-label={`从头读 ${t.title}`}>
+                  从头
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </Sheet>
   )
@@ -264,14 +292,18 @@ export function VoiceSheet({ meta, onClose }: { meta: BookMeta; onClose: () => v
     const good = mine.filter(v => v.quality === 'premium' || v.quality === 'enhanced').length
     const unchanged = list.map(v => v.voiceURI).join('|') === before
     toast(
-      `找到 ${mine.length} 个${langLabel(lang)}声音，其中高品质 ${good} 个。` +
-        (unchanged ? '\n列表没有变化：刚下载的声音要从后台完全关闭本 App 后重新打开才会出现，必要时重启手机。' : ''),
+      `找到 ${mine.length} 个${langLabel(lang)}声音${good ? `，其中高品质 ${good} 个` : ''}。` +
+        (unchanged && isIOS()
+          ? `\n列表没有变化：iPhone 只把系统自带的基础声音提供给网页，在「朗读内容」里另外下载的声音不会出现在这里。可以试试最上面的「${autoVoiceName()}」。`
+          : ''),
       'info',
       { duration: unchanged ? 9000 : 4000 },
     )
   }
 
   const systemList = useMemo(() => systemVoiceOptions(allLangs ? undefined : lang), [allLangs, lang, voicesVersion])
+  // 不指定声音、由系统按「朗读内容」的设置挑选（可能用上另外下载的声音）
+  const autoList = useMemo(() => autoVoiceOptions(lang), [lang, voicesVersion])
   const azureList = useMemo(() => {
     const list = azureAll ?? AZURE_VOICES
     return allLangs ? list : list.filter(v => baseLang(v.lang) === lang || (lang === 'zh' && /^zh/.test(v.lang)))
@@ -299,7 +331,7 @@ export function VoiceSheet({ meta, onClose }: { meta: BookMeta; onClose: () => v
       if (voice) {
         u.voice = voice
         u.lang = voice.lang
-      }
+      } else u.lang = v.lang
       u.rate = player.state.rate
       u.onend = u.onerror = () => setPreviewing(p => (p === key ? null : p))
       speechSynthesis.cancel()
@@ -409,16 +441,23 @@ export function VoiceSheet({ meta, onClose }: { meta: BookMeta; onClose: () => v
 
       {tab === 'system' && (
         <>
+          {autoList.map(row)}
           {!systemList.length && <div class="hint">没有找到{allLangs ? '' : '该语言的'}系统语音。{!allLangs && '可以打开「全部语言」看看。'}</div>}
           {systemList.map(row)}
           <div class="hint">
-            <b>想要更自然的系统声音？</b>
-            <ol style={{ margin: '6px 0 0', paddingLeft: '20px' }}>
-              <li>iPhone「设置 → 辅助功能 → 朗读内容 → 声音 → 中文」，下载带「增强」或「高级」字样的声音（需要 Wi-Fi，几十到几百 MB）。</li>
-              <li>下载完成后，<b>从后台上滑完全关闭本 App 再打开</b>，新声音才会出现在上面的列表里。</li>
-              <li>在这里点选它。本 App 的声音单独设置，不跟随系统「朗读内容」里选的声音。</li>
+            <b>为什么在 iPhone 里下载的声音不在列表里？</b>
+            <div style={{ marginTop: '4px' }}>
+              iPhone 上所有浏览器和添加到主屏幕的网页 App，朗读都由苹果的 WebKit 提供。为了防止“设备指纹”追踪，它只把系统自带的基础声音提供给网页（中文一般是婷婷、美佳、善怡这几个）。在「朗读内容」里另外下载的增强 / 高级声音和 Siri 声音，网页都读不到；刷新、重启手机、换浏览器都改变不了，苹果的工程师也确认过。
+            </div>
+            <b style={{ display: 'block', marginTop: '8px' }}>可以试试「{autoVoiceName()}」（实验）</b>
+            <ol style={{ margin: '4px 0 0', paddingLeft: '20px' }}>
+              <li>iPhone「设置 → 辅助功能 → 朗读内容 → 声音 → 中文 → 普通话」，选中你下载的声音（不要选 Siri 声音）。</li>
+              <li>回到这里，点最上面「{autoVoiceName()}」（普通话）右边的试听，再试听下面的普通话声音（婷婷 / Tingting）对比。</li>
+              <li>听起来不一样，就说明用上了你选的声音，点选它即可；听起来一样，说明你的 iOS 版本不支持，请改用固定声音或云端声音。</li>
             </ol>
-            <div style={{ marginTop: '6px' }}>注意：Siri 的声音苹果不开放给网页和第三方 App 使用，这里不会出现，也不需要下载。</div>
+            <div style={{ marginTop: '6px' }}>
+              想要稳定的高品质声音：用上方的「Azure 神经语音」或「OpenAI 兼容」（需要联网，在「设置」里填写密钥）。
+            </div>
             <div style={{ marginTop: '8px' }}>
               <button class="chip" onClick={refreshVoices}>
                 <IconRefresh size={14} /> 刷新声音列表

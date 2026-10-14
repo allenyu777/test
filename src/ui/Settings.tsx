@@ -307,7 +307,7 @@ export function SettingsPage() {
         <div class="group-pad" style={{ fontSize: '14px', lineHeight: 1.7, color: 'var(--text-2)', paddingBottom: '14px' }}>
           <b style={{ color: 'var(--text)' }}>安装到主屏幕</b>：用 Safari 打开本页 → 分享 → 添加到主屏幕。之后从图标打开，全屏无地址栏，数据单独保存。
           <br />
-          <b style={{ color: 'var(--text)' }}>更自然的系统声音</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载「增强 / 高级」声音；下载完要从后台完全关闭本 App 再打开，然后在播放页「声音」里选它。Siri 声音不对网页开放，无法使用。
+          <b style={{ color: 'var(--text)' }}>系统声音</b>：iPhone 只把自带的基础声音提供给网页（防止设备指纹追踪），在「朗读内容」里另外下载的增强 / 高级声音和 Siri 声音都不会出现在列表里。可以试试「声音」列表最上面的「跟随 iPhone 设置」（实验）：由 iPhone 按「朗读内容」里选中的声音来读，部分 iOS 版本有效，试听对比就知道。想要稳定的自然声音，请用 Azure 或 OpenAI 云端声音。
           <br />
           <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费离线，云端识别更准更快；识别期间请让 App 保持在前台。
           <br />
@@ -319,7 +319,7 @@ export function SettingsPage() {
         </div>
       </div>
       <div class="about">
-        听书 v1.2 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
+        听书 v1.3 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}

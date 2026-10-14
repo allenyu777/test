@@ -109,7 +109,54 @@ export function systemVoices(): SpeechSynthesisVoice[] {
 }
 
 export function findSystemVoice(id: string): SpeechSynthesisVoice | undefined {
+  if (isAutoVoice(id)) return undefined
   return systemVoices().find(v => v.voiceURI === id || v.name === id)
+}
+
+/**
+ * "跟随系统设置"：不指定具体声音，只告诉系统用哪种语言读，由系统自己挑声音。
+ * iPhone 只把自带的基础声音列给网页（防止设备指纹追踪），在「朗读内容」里另外下载的声音不会出现在列表里；
+ * 不指定声音时，部分 iOS 版本会用「朗读内容」里为这种语言选中的声音，有可能用上下载的高品质声音。
+ */
+const AUTO_PREFIX = 'auto:'
+
+export function isAutoVoice(id: string | undefined): boolean {
+  return !!id && id.startsWith(AUTO_PREFIX)
+}
+
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
+export function autoVoiceName(): string {
+  return isIOS() ? '跟随 iPhone 设置' : '跟随系统设置'
+}
+
+const MAIN_LOCALE: Record<string, string> = { zh: 'zh-CN', en: 'en-US', ja: 'ja-JP', ko: 'ko-KR', fr: 'fr-FR', de: 'de-DE', es: 'es-ES' }
+
+/** 这本书语言的每个地区（普通话、台湾国语、粤语…）各一个"跟随系统设置"选项 */
+export function autoVoiceOptions(lang?: string): VoiceOption[] {
+  const base = baseLang(lang)
+  if (!base) return []
+  const locales = new Set<string>()
+  for (const v of systemVoices()) {
+    if (baseLang(v.lang) === base || (base === 'zh' && /^yue/i.test(v.lang))) locales.add(v.lang.replace('_', '-'))
+  }
+  // 没有预设的语言：用设备上有的地区（ru-RU、it-IT…），都没有才用语言代码本身
+  const regional = [...locales].sort()
+  const main = MAIN_LOCALE[base] ?? regional.find(l => l.toLowerCase() === `${base}-${base}`) ?? regional[0] ?? base
+  locales.add(main)
+  return [...locales]
+    .sort((a, b) => Number(b === main) - Number(a === main) || a.localeCompare(b))
+    .map(locale => ({
+      engine: 'system' as const,
+      id: AUTO_PREFIX + locale,
+      name: autoVoiceName(),
+      lang: locale,
+      quality: 'standard' as const,
+      desc: '实验',
+    }))
 }
 
 const QUALITY_RANK: Record<Quality, number> = { premium: 3, enhanced: 2, standard: 1, novelty: -5 }
@@ -194,7 +241,7 @@ export function resolveVoice(bookVoice: VoiceChoice | null | undefined, lang: st
   const candidates = [bookVoice, s.voices[baseLang(lang)]].filter(Boolean) as VoiceChoice[]
   for (const c of candidates) {
     if (c.engine === 'system') {
-      if (findSystemVoice(c.id) || !systemVoices().length) return c
+      if (isAutoVoice(c.id) || findSystemVoice(c.id) || !systemVoices().length) return c
     } else if (engineReady(c.engine, s)) return c
   }
   const best = systemVoiceOptions(lang)[0]
@@ -206,6 +253,7 @@ export function resolveVoice(bookVoice: VoiceChoice | null | undefined, lang: st
 export function voiceLabel(v: VoiceChoice): string {
   if (v.engine === 'azure') return AZURE_VOICES.find(x => x.id === v.id)?.name ?? v.name ?? v.id
   if (v.engine === 'openai') return v.name || v.id
+  if (isAutoVoice(v.id)) return isIOS() ? 'iPhone 设置' : '系统设置'
   const sys = findSystemVoice(v.id)
   return sys ? cleanVoiceName(sys.name) : v.name || '系统默认'
 }

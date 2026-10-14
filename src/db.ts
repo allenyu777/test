@@ -24,6 +24,17 @@ export interface BookMeta {
   finished?: boolean
   /** 扫描版 PDF 的文字识别进度 */
   ocr?: OcrInfo | null
+  /** 每一章上次读到的位置（按章节开头的段落号记），跳到别的章节再回来时接着读 */
+  chapterPos?: Record<string, ChapterMark>
+}
+
+export interface ChapterMark {
+  b: number
+  o: number
+  /** 记下的时间 */
+  t: number
+  /** 从这个时间起暂时保留这个位置（位置往回移动时，见 Player.rememberChapter） */
+  h?: number
 }
 
 export type OcrEngine = 'local' | 'cloud'

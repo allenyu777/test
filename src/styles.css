@@ -1305,6 +1305,33 @@ a {
   color: var(--text-2);
 }
 
+.toc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toc-row .toc-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.toc-item .pct.resume {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 目录里"从头读"这一章 */
+.toc-restart {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
 /* 笔记 */
 .note-card {
   background: var(--surface);
