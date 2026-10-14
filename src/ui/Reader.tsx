@@ -161,8 +161,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   /** 高亮当前句，并按需滚动 */
   const applyHighlight = (mode: 'follow' | 'center' | 'none') => {
     const el = currentEl()
-    const prev = contentRef.current?.querySelector('.s.cur')
-    if (prev && prev !== el) prev.classList.remove('cur')
+    contentRef.current?.querySelectorAll('.s.cur').forEach(prev => prev !== el && prev.classList.remove('cur'))
     if (!el) return
     el.classList.add('cur')
     const rect = el.getBoundingClientRect()

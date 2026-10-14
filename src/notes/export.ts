@@ -138,7 +138,6 @@ export function downloadFile(file: Blob & { name?: string }, name = file.name ??
   const a = document.createElement('a')
   a.href = url
   a.download = name
-  a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
   a.remove()

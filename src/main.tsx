@@ -8,6 +8,8 @@ import { toast } from './ui/toast'
 
 let notifyUpdate: ((apply: () => void) => void) | null = null
 let pendingUpdate: (() => void) | null = null
+// 只有用户点了"立即更新"才刷新页面（首次安装时 Service Worker 接管页面不应刷新）
+let updateRequested = false
 
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || import.meta.env.DEV) return
@@ -16,7 +18,10 @@ function registerServiceWorker() {
     .then(reg => {
       const offer = (worker: ServiceWorker | null) => {
         if (!worker || !navigator.serviceWorker.controller) return
-        const apply = () => worker.postMessage('skipWaiting')
+        const apply = () => {
+          updateRequested = true
+          worker.postMessage('skipWaiting')
+        }
         if (notifyUpdate) notifyUpdate(apply)
         else pendingUpdate = apply
       }
@@ -33,10 +38,9 @@ function registerServiceWorker() {
       })
     })
     .catch(() => {})
-  let reloading = false
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloading) return
-    reloading = true
+    if (!updateRequested) return
+    updateRequested = false
     location.reload()
   })
 }

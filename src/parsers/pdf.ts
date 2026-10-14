@@ -72,6 +72,8 @@ const normalizeRepeat = (s: string) => s.replace(/\d+/g, '#').replace(/\s+/g, ''
 
 /** 去掉每页重复出现的页眉页脚和页码 */
 export function stripHeadersFooters(pages: Line[][]): Line[][] {
+  // 页数太少时无法判断哪些是重复的页眉页脚
+  if (pages.length < 5) return pages.map(lines => lines.filter(l => !PAGE_NUMBER.test(l.text)))
   const counts = new Map<string, number>()
   for (const lines of pages) {
     const edge = new Set([...lines.slice(0, 2), ...lines.slice(-2)].map(l => normalizeRepeat(l.text)))
@@ -83,6 +85,8 @@ export function stripHeadersFooters(pages: Line[][]): Line[][] {
       const isEdge = i < 2 || i >= lines.length - 2
       if (!isEdge) return true
       if (PAGE_NUMBER.test(l.text)) return false
+      // 页眉页脚一般很短（书名、章节名）
+      if (l.text.length > 40) return true
       return (counts.get(normalizeRepeat(l.text)) ?? 0) < threshold
     }),
   )
