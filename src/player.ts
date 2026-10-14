@@ -88,6 +88,7 @@ class Player {
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private sleepTimer: ReturnType<typeof setTimeout> | null = null
   private stopAt: number | null = null
+  private saveWarned = false
 
   constructor() {
     if (typeof document === 'undefined') return
@@ -126,10 +127,28 @@ class Player {
       pos,
       rate,
       voice: resolveVoice(meta.voice, meta.lang, s),
-      percent: book.percent(pos),
+      percent: meta.finished ? 100 : book.percent(pos),
       chapter: book.chapterTitle(pos.b),
     })
     this.updateMetadata()
+  }
+
+  /** 卸下当前的书（例如书被删除时） */
+  close() {
+    this.engine?.stop()
+    this.engine = null
+    this.clearSleep()
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.saveTimer = null
+    this.meta = null
+    this.book = null
+    this.store.set({ bookId: null, status: 'idle', loading: false })
+    setWakeLock(false)
+    stopKeepAlive()
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.playbackState = 'none'
+    }
   }
 
   /** 必须在用户点击的同步调用栈中调用，iOS 才允许出声 */
@@ -225,8 +244,11 @@ class Player {
       const lang = this.meta.lang || 'zh'
       updateSettings({ voices: { ...settings.get().voices, [lang]: voice } })
     }
-    if (this.state.status === 'playing') this.startEngine(this.state.pos)
-    else if (this.engine?.isActive()) {
+    if (this.state.status === 'playing') {
+      // 从系统语音换到云端语音时，要在这次点击里先解锁 <audio>
+      if (voice.engine !== 'system') primeAudio()
+      this.startEngine(this.state.pos)
+    } else if (this.engine?.isActive()) {
       this.engine.stop()
       if (this.state.status === 'paused') this.setStatus('paused')
     }
@@ -299,7 +321,8 @@ class Player {
     const engine = this.getEngine()
     if (this.engine && this.engine !== engine) this.engine.stop()
     this.engine = engine
-    if (this.stopAt != null && start.b >= this.stopAt) this.stopAt = book.chapterRange(start.b).end
+    // "读完本章"始终指向开始朗读位置所在的章节（往前或往后跳章都会重新计算）
+    if (this.stopAt != null) this.stopAt = book.chapterRange(start.b).end
     const source = createSource(book, start, engine.maxChars, () => this.stopAt)
     const voice = this.state.voice
     const callbacks: EngineCallbacks = {
@@ -320,8 +343,8 @@ class Player {
       },
     }
     this.setPos(start)
-    engine.start(source, { voiceId: voice.id, lang: voice.lang || meta.lang, rate: this.state.rate }, callbacks)
     this.setStatus('playing')
+    engine.start(source, { voiceId: voice.id, lang: voice.lang || meta.lang, rate: this.state.rate }, callbacks)
     if (!meta.lastReadAt || Date.now() - meta.lastReadAt > 60000) this.saveNow()
   }
 
@@ -355,12 +378,14 @@ class Player {
       return
     }
     this.setStatus('idle')
+    // 读完时进度记为 100%，之后再保存也不会把"已读完"改回去
+    this.store.set({ percent: 100 })
+    this.saveNow()
     if (this.meta) {
       this.meta.finished = true
       patchBookLocal(this.meta.id, { finished: true })
       db.updateBook(this.meta.id, { finished: true })
     }
-    this.saveNow()
     toast('全书已经读完 🎉', 'success')
   }
 
@@ -405,7 +430,12 @@ class Player {
     if (meta.finished && percent < 99) patch.finished = false
     Object.assign(meta, patch)
     patchBookLocal(meta.id, patch)
-    db.updateBook(meta.id, patch).catch(() => {})
+    db.updateBook(meta.id, patch).catch(() => {
+      // 只提示一次，避免刷屏
+      if (this.saveWarned) return
+      this.saveWarned = true
+      toast('阅读进度保存失败，请关闭后重新打开应用', 'error', { duration: 8000 })
+    })
   }
 
   private onVisibility() {

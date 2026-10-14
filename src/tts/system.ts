@@ -22,6 +22,8 @@ export class SystemEngine implements Engine {
   private watchdog: ReturnType<typeof setTimeout> | null = null
   private active = false
   private lookahead = LOOKAHEAD
+  /** 连续合成失败的次数，避免声音坏掉时一路"跳读"到书末 */
+  private failures = 0
 
   start(source: SegmentSource, options: EngineOptions, callbacks: EngineCallbacks) {
     const wasBusy = speechSynthesis.speaking || speechSynthesis.pending
@@ -31,6 +33,7 @@ export class SystemEngine implements Engine {
     this.options = options
     this.callbacks = callbacks
     this.exhausted = false
+    this.failures = 0
     this.active = true
     // Safari 在 cancel() 之后立刻 speak() 偶尔会被吞掉，稍等一下再开始
     if (wasBusy) setTimeout(() => gen === this.gen && this.fill(gen), 120)
@@ -64,6 +67,7 @@ export class SystemEngine implements Engine {
     u.onstart = () => {
       if (gen !== this.gen) return
       item.started = true
+      this.failures = 0
       this.callbacks?.onSentence(segment.sentences[0].pos)
       this.armWatchdog(gen, segment)
     }
@@ -77,7 +81,12 @@ export class SystemEngine implements Engine {
         this.stop()
         return
       }
-      // 合成失败的句子跳过，继续往下读
+      if (++this.failures >= 3) {
+        this.callbacks?.onError(`当前声音无法朗读（${error}），请换一个声音`)
+        this.stop()
+        return
+      }
+      // 偶尔合成失败的句子跳过，继续往下读
       this.advance(gen, item)
     }
     this.queue.push(item)

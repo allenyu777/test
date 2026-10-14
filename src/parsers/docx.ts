@@ -6,6 +6,7 @@ import { titleFromFileName } from './txt'
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const DC = 'http://purl.org/dc/elements/1.1/'
+const MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
 
 function wAttr(el: Element | undefined, name: string): string | null {
   if (!el) return null
@@ -27,6 +28,13 @@ function headingStyles(stylesXml: Document | null): Map<string, number> {
     if (id && level) map.set(id, Math.min(6, level))
   }
   return map
+}
+
+function inFallback(el: Element, stop: Element): boolean {
+  for (let a = el.parentElement; a && a !== stop; a = a.parentElement) {
+    if (a.namespaceURI === MC && a.localName === 'Fallback') return true
+  }
+  return false
 }
 
 function hasParagraphAncestor(el: Element): boolean {
@@ -55,6 +63,8 @@ export function parseDocx(buffer: ArrayBuffer, fileName: string): ParsedBook {
     if (hasParagraphAncestor(p)) continue
     let text = ''
     for (const el of Array.from(p.getElementsByTagNameNS(W, '*'))) {
+      // 文本框等内容在 mc:Choice 和 mc:Fallback 里各有一份，只取一份
+      if (inFallback(el, p)) continue
       switch (el.localName) {
         case 't':
           text += el.textContent ?? ''

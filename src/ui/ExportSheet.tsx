@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import * as db from '../db'
 import type { BookMeta } from '../db'
 import { buildNotesFile, copyText, downloadFile, shareFile, type ExportFormat } from '../notes/export'
@@ -10,6 +10,11 @@ import { toast } from './toast'
 /** 文件已生成：分享 / 下载 / 复制 */
 export function ExportReady({ file }: { file: File }) {
   const isText = /\.(md|txt)$/.test(file.name)
+  // 提前读出文字：iOS 只允许在点击的同一时刻写剪贴板
+  const [text, setText] = useState<string | null>(null)
+  useEffect(() => {
+    if (isText) file.text().then(setText)
+  }, [file])
   return (
     <div>
       <div class="hint" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -35,10 +40,10 @@ export function ExportReady({ file }: { file: File }) {
         {isText && (
           <button
             class="btn block"
-            onClick={async () => {
-              const ok = await copyText(await file.text())
-              toast(ok ? '已复制到剪贴板' : '复制失败', ok ? 'success' : 'error')
-            }}
+            disabled={text === null}
+            onClick={() =>
+              copyText(text ?? '').then(ok => toast(ok ? '已复制到剪贴板' : '复制失败', ok ? 'success' : 'error'))
+            }
           >
             <IconCopy size={18} /> 复制全部文字
           </button>

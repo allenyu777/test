@@ -379,7 +379,7 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
 
   const remove = async () => {
     if (!confirm(`确定删除《${meta.title}》吗？\n书籍、进度和笔记都会一起删除。`)) return
-    if (player.state.bookId === meta.id) player.pause()
+    if (player.state.bookId === meta.id) player.close()
     await removeBook(meta.id)
     toast('已删除')
     onClose()

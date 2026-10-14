@@ -8,12 +8,14 @@ import { Recorder, recordingSupported, type Recording } from '../notes/recorder'
 import { transcribe, transcriptionAvailable } from '../notes/transcribe'
 import { player } from '../player'
 import { settings } from '../settings'
+import { makeWav } from '../tts/audio'
 import { IconMic, IconPause, IconPen, IconPlay, IconShare, IconSparkles, IconStop, IconTrash } from './icons'
 import { Sheet } from './Sheet'
 import { toast } from './toast'
 
 let noteAudio: HTMLAudioElement | null = null
 let noteAudioOwner: ((playing: boolean) => void) | null = null
+let silentUrl: string | null = null
 
 /** 播放语音笔记的小按钮 */
 export function AudioChip({ audioId, blob, duration }: { audioId?: string; blob?: Blob | null; duration?: number }) {
@@ -39,6 +41,13 @@ export function AudioChip({ audioId, blob, duration }: { audioId?: string; blob?
       return
     }
     let source = blob ?? null
+    if (!source) {
+      // 录音要先从数据库读出来；iOS 要求 play() 在点击中调用，所以先用静音解锁
+      silentUrl ??= URL.createObjectURL(makeWav(0.2))
+      a.onended = a.onpause = a.onplay = null
+      a.src = silentUrl
+      a.play().catch(() => {})
+    }
     if (!source && audioId) {
       const rec = await db.getAudio(audioId)
       if (rec) source = new Blob([rec.data], { type: rec.type })
@@ -92,6 +101,9 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const wasPlaying = useRef(false)
+  const starting = useRef(false)
+  const mounted = useRef(true)
+  const [saving, setSaving] = useState(false)
 
   const quote = note?.quote ?? book.sentenceText(pos)
   const lang = meta.lang || 'zh'
@@ -104,6 +116,7 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
     if (autoRecord && recordingSupported()) startRecording()
     else if (!note) setTimeout(() => textRef.current?.focus(), 300)
     return () => {
+      mounted.current = false
       recorder.current?.cancel()
       dictation.current?.abort()
       if (timer.current) clearInterval(timer.current)
@@ -115,13 +128,26 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
       toast('当前浏览器不支持录音', 'error')
       return
     }
+    if (starting.current || recorder.current) return
+    // 正在听写时先把未确认的文字留下，再停止听写
+    if (interim) setText(t => t + interim)
+    setInterim('')
     dictation.current?.abort()
     setDictating(false)
+    starting.current = true
     const r = new Recorder()
     try {
       await r.start(setLevel)
     } catch {
+      starting.current = false
+      r.cancel()
       toast('无法使用麦克风，请在系统设置中允许访问', 'error')
+      return
+    }
+    starting.current = false
+    // 等待麦克风授权期间面板已经关闭：立即释放麦克风
+    if (!mounted.current) {
+      r.cancel()
       return
     }
     recorder.current = r
@@ -130,21 +156,23 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
     timer.current = setInterval(() => setElapsed(r.elapsed), 250)
   }
 
-  const stopRecording = async () => {
+  /** 停止录音；返回这段录音（太短则返回 null） */
+  const stopRecording = async (transcribeAfter = true): Promise<Recording | null> => {
     const r = recorder.current
-    if (!r) return
+    if (!r) return null
     if (timer.current) clearInterval(timer.current)
     recorder.current = null
     setRecording(false)
     setLevel(0)
     const rec = await r.stop()
-    if (rec.duration < 0.6) {
+    if (rec.duration < 0.6 || !rec.blob.size) {
       toast('录音太短了')
-      return
+      return null
     }
     setAudio(rec)
     setKeepAudioId(null)
-    if (transcriptionAvailable()) runTranscribe(rec.blob)
+    if (transcribeAfter && transcriptionAvailable()) runTranscribe(rec.blob)
+    return rec
   }
 
   const runTranscribe = async (blob: Blob) => {
@@ -190,22 +218,41 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
   }
 
   const save = async () => {
-    if (recording) await stopRecording()
+    if (saving) return
+    setSaving(true)
+    try {
+      await doSave()
+    } finally {
+      if (mounted.current) setSaving(false)
+    }
+  }
+
+  const doSave = async () => {
+    // 直接点保存时，正在录的这段也要保存下来（用返回值，避免读到旧的 state）
+    let rec = audio
+    let keep = keepAudioId
+    if (recorder.current) {
+      const r = await stopRecording(false)
+      if (r) {
+        rec = r
+        keep = null
+      }
+    }
     dictation.current?.stop()
     const body = (text + (interim ? interim : '')).trim()
-    if (!body && !audio && !keepAudioId) {
+    if (!body && !rec && !keep) {
       toast('写点什么，或者录一段语音吧')
       return
     }
     const now = Date.now()
-    let audioId = keepAudioId ?? undefined
-    let audioType = keepAudioId ? note?.audioType : undefined
-    let audioDuration = keepAudioId ? note?.audioDuration : undefined
-    if (audio) {
+    let audioId = keep ?? undefined
+    let audioType = keep ? note?.audioType : undefined
+    let audioDuration = keep ? note?.audioDuration : undefined
+    if (rec) {
       audioId = db.uid()
-      audioType = audio.type
-      audioDuration = audio.duration
-      await db.saveAudio({ id: audioId, data: await audio.blob.arrayBuffer(), type: audio.type })
+      audioType = rec.type
+      audioDuration = rec.duration
+      await db.saveAudio({ id: audioId, data: await rec.blob.arrayBuffer(), type: rec.type })
     }
     if (note?.audioId && note.audioId !== audioId) await db.deleteAudio(note.audioId)
     const saved: Note = {
@@ -251,7 +298,7 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
           <button class="btn" onClick={() => finish(note ?? null)}>
             取消
           </button>
-          <button class="btn primary" onClick={save} disabled={transcribing}>
+          <button class="btn primary" onClick={save} disabled={transcribing || saving}>
             保存
           </button>
         </>
@@ -264,7 +311,7 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
           <button
             class={`rec-btn ${recording ? 'recording' : ''}`}
             style={{ '--level': String(1 + level * 0.35) }}
-            onClick={recording ? stopRecording : startRecording}
+            onClick={() => (recording ? stopRecording() : startRecording())}
             aria-label={recording ? '停止录音' : '开始录音'}
           >
             {recording ? <IconStop size={22} /> : <IconMic size={24} />}
@@ -330,6 +377,7 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
           class="textarea"
           rows={5}
           value={text + (interim ? interim : '')}
+          readOnly={dictating}
           placeholder="写下你的想法…（也可以点键盘上的麦克风直接说）"
           onInput={e => setText((e.target as HTMLTextAreaElement).value)}
         />

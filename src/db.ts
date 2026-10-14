@@ -57,6 +57,14 @@ let dbPromise: Promise<IDBPDatabase<Schema>> | null = null
 function db() {
   if (!dbPromise) {
     dbPromise = openDB<Schema>('tingshu', 1, {
+      // iOS 在后台可能关闭数据库连接；下次使用时重新打开
+      terminated() {
+        dbPromise = null
+      },
+      blocking() {
+        dbPromise?.then(d => d.close())
+        dbPromise = null
+      },
       upgrade(database) {
         database.createObjectStore('books', { keyPath: 'id' })
         database.createObjectStore('contents', { keyPath: 'id' })
@@ -90,12 +98,24 @@ export async function saveBook(meta: BookMeta, content?: BookContent) {
   await tx.done
 }
 
-export async function updateBook(id: string, patch: Partial<BookMeta>) {
+async function writeBookPatch(id: string, patch: Partial<BookMeta>) {
   const d = await db()
   const tx = d.transaction('books', 'readwrite')
   const current = await tx.store.get(id)
   if (current) await tx.store.put({ ...current, ...patch })
   await tx.done
+}
+
+/** 更新书籍信息（进度保存很频繁）；连接失效时重新打开数据库再试一次 */
+export async function updateBook(id: string, patch: Partial<BookMeta>) {
+  try {
+    await writeBookPatch(id, patch)
+  } catch (e) {
+    const name = (e as DOMException)?.name
+    if (name !== 'InvalidStateError' && name !== 'UnknownError' && name !== 'TransactionInactiveError') throw e
+    dbPromise = null
+    await writeBookPatch(id, patch)
+  }
 }
 
 export async function getContent(id: string) {
@@ -122,6 +142,10 @@ export async function listNotes(bookId: string): Promise<Note[]> {
 
 export async function listAllNotes(): Promise<Note[]> {
   return (await db()).getAll('notes')
+}
+
+export async function getNote(id: string) {
+  return (await db()).get('notes', id)
 }
 
 export async function saveNote(note: Note) {

@@ -1,5 +1,6 @@
 // TXT / Markdown 解析
 import { BookBuilder, type ParsedBook } from '../core/book'
+import { chapterLevel } from '../core/chapters'
 import { cjkRatio, detectLang } from '../core/text'
 
 /** 从文件名中提取书名和作者，例如《三体》作者：刘慈欣.txt */
@@ -35,8 +36,85 @@ function findAuthor(lines: string[]): string {
  * 把纯文本拆成段落。
  * 若文本是"空行分段、行内硬换行"（如古腾堡英文书），会把同一段的行合并。
  */
+const MAX_LINE = 3000
+const SENTENCE_END_RE = /[。！？!?…”」』]\s*$/
+
+/** 没有换行的超长"行"（整本书一行）按段首缩进或句末切开，避免一个段落几十万字 */
+function splitLongLine(line: string): string[] {
+  if (line.length <= MAX_LINE) return [line]
+  const out: string[] = []
+  for (const piece of line.split(/(?=\u3000\u3000)|\s{4,}/)) {
+    if (piece.length <= MAX_LINE) {
+      out.push(piece)
+      continue
+    }
+    let start = 0
+    const re = /[。！？!?…]+[”」』"']?/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(piece))) {
+      const end = m.index + m[0].length
+      if (end - start >= 500) {
+        out.push(piece.slice(start, end))
+        start = end
+      }
+    }
+    if (start < piece.length) out.push(piece.slice(start))
+  }
+  return out
+}
+
+/**
+ * 中文硬换行文本：段首有缩进，段内每行在固定宽度处断开（行很长且不以句末标点结尾）。
+ * 把这种行接回同一段。
+ */
+function joinIndentedWrapped(lines: string[]): string[] | null {
+  const nonBlank = lines.filter(l => l.trim())
+  if (nonBlank.length < 10) return null
+  const indentedRe = /^(\u3000|\s{2,})/
+  const indented = nonBlank.filter(l => indentedRe.test(l)).length / nonBlank.length
+  if (indented < 0.05 || indented > 0.7) return null
+  const lengths = nonBlank.map(l => l.trim().length).sort((a, b) => a - b)
+  const p90 = lengths[Math.floor(lengths.length * 0.9)] ?? 0
+  if (p90 < 10) return null
+  const isFull = (l: string) => l.trim().length >= p90 * 0.85 && !SENTENCE_END_RE.test(l)
+  // 非缩进行中，大多数紧跟在一个"写满且没结束"的行后面
+  let follow = 0
+  let total = 0
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line.trim() || indentedRe.test(line)) continue
+    total++
+    if (lines[i - 1].trim() && isFull(lines[i - 1])) follow++
+  }
+  if (total < 5 || follow / total < 0.6) return null
+
+  const out: string[] = []
+  let cur = ''
+  let prev = ''
+  for (const line of lines) {
+    if (!line.trim()) {
+      if (cur) out.push(cur)
+      cur = ''
+      prev = ''
+      continue
+    }
+    const t = line.trim()
+    const startNew = !cur || indentedRe.test(line) || !isFull(prev) || chapterLevel(t) >= 0 || chapterLevel(cur) >= 0
+    if (startNew) {
+      if (cur) out.push(cur)
+      cur = t
+    } else cur += t
+    prev = line
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
 export function textToParagraphs(text: string): string[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .flatMap(splitLongLine)
   const nonBlank = lines.filter(l => l.trim())
   if (!nonBlank.length) return []
   const blank = lines.length - nonBlank.length
@@ -66,9 +144,12 @@ export function textToParagraphs(text: string): string[] {
     endsSentence < 0.5 &&
     indented < 0.3
 
-  if (!wrapped) return nonBlank.map(l => l.trim())
-
   const cjk = cjkRatio(text.slice(0, 20000)) > 0.3
+  if (!wrapped) {
+    const joined = cjk ? joinIndentedWrapped(lines) : null
+    return joined ?? nonBlank.map(l => l.trim())
+  }
+
   return groups.map(group => {
     let out = ''
     for (const raw of group) {

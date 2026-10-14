@@ -99,9 +99,13 @@ export async function buildNotesFile(
 
   // ZIP：每本书一个 Markdown 文件 + 录音文件夹
   const files: Record<string, Uint8Array> = {}
+  const usedNames = new Set<string>()
   for (const { book, notes } of list) {
     const audioPaths = new Map<string, string>()
-    const folder = safeFileName(book.title)
+    // 同名的书加上序号，避免互相覆盖
+    let folder = safeFileName(book.title)
+    for (let n = 2; usedNames.has(folder); n++) folder = `${safeFileName(book.title)}-${n}`
+    usedNames.add(folder)
     let i = 0
     for (const n of notes) {
       if (!n.audioId) continue

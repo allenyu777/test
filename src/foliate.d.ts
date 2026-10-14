@@ -29,6 +29,7 @@ declare module 'foliate-js/epub.js' {
     loadText(name: string): string | null | Promise<string | null>
     loadBlob(name: string): Blob | null | Promise<Blob | null>
     getSize(name: string): number
+    sha1?(str: string): Promise<Uint8Array>
   }
   export class EPUB {
     constructor(loader: FoliateLoader)

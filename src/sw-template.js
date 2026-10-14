@@ -4,7 +4,9 @@ const CACHE = 'tingshu-' + VERSION
 const ASSETS = __ASSETS__
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)))
+  // 绕过浏览器 HTTP 缓存，避免把旧的 index.html 和新的资源文件存在一起
+  event.waitUntil(caches.open(CACHE).then(cache =>
+    cache.addAll(ASSETS.map(url => new Request(url, { cache: 'reload' })))))
 })
 
 self.addEventListener('activate', event => {
