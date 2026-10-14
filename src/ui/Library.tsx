@@ -69,6 +69,17 @@ export function Library() {
   const [dragging, setDragging] = useState(false)
   const [scanAsk, setScanAsk] = useState<{ file: File; scanned: ScannedPdfError; resolve: (c: ScanChoice | null) => void } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // 离开书架时，还在等待选择识别方式的导入按"取消"处理，避免导入一直卡住
+  const mounted = useRef(true)
+  const pendingScan = useRef<((choice: ScanChoice | null) => void) | null>(null)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      pendingScan.current?.(null)
+      pendingScan.current = null
+    }
+  }, [])
 
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -105,9 +116,14 @@ export function Library() {
       const added = await importFiles(list, {
         // 扫描版 PDF：问用户用哪种方式识别文字
         onScanned: (file, scanned, setProgress) =>
-          new Promise<ScanChoice | null>(resolve => setScanAsk({ file, scanned, resolve })).then(choice =>
-            choice ? createScannedBook(file, scanned, choice, setProgress) : null,
-          ),
+          new Promise<ScanChoice | null>(resolve => {
+            if (!mounted.current) return resolve(null)
+            pendingScan.current = resolve
+            setScanAsk({ file, scanned, resolve })
+          }).then(choice => {
+            pendingScan.current = null
+            return choice ? createScannedBook(file, scanned, choice, setProgress) : null
+          }),
       })
       if (added.length === 1) toast(`已导入《${added[0].title}》`, 'success')
       else if (added.length) toast(`已导入 ${added.length} 本书`, 'success')
@@ -413,6 +429,8 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
   const remove = async () => {
     if (!confirm(`确定删除《${meta.title}》吗？\n书籍、进度和笔记都会一起删除。`)) return
     if (player.state.bookId === meta.id) player.close()
+    // 正在识别的话，停下并不再保存
+    ocrRunner.cancel(meta.id)
     await removeBook(meta.id)
     toast('已删除')
     onClose()

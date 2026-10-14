@@ -157,7 +157,7 @@ export class Book {
   /** cum[i] = 第 i 段之前的总字数 */
   cum!: Float64Array
   totalChars!: number
-  private cache = new Map<number, Sentence[]>()
+  private cache: Map<number, Sentence[]> = new Map()
 
   constructor(content: BookContent) {
     this.replace(content)
@@ -176,9 +176,11 @@ export class Book {
     this.heads = content.heads
     this.pages = content.pages
     const cum = new Float64Array(this.blocks.length + 1)
-    const keep = this.cum && oldLength <= this.blocks.length ? oldLength : 0
+    // 识别下一页时，可能把跨页的句子接到原来最后一段后面，所以最后一段也重新计算
+    const keep = this.cum && oldLength <= this.blocks.length ? Math.max(0, oldLength - 1) : 0
     if (keep) cum.set(this.cum.subarray(0, keep + 1))
     for (let i = keep; i < this.blocks.length; i++) cum[i + 1] = cum[i] + this.blocks[i].length
+    for (const b of [...this.cache.keys()]) if (b >= keep) this.cache.delete(b)
     this.cum = cum
     this.totalChars = cum[this.blocks.length]
   }
@@ -203,7 +205,8 @@ export class Book {
       const text = this.blocks[b] ?? ''
       s = splitSentences(text)
       if (!s.length && text) s = [{ o: 0, e: text.length }]
-      this.cache.set(b, s)
+      // 还没识别出来的段落不缓存
+      if (b < this.blocks.length) this.cache.set(b, s)
     }
     return s
   }

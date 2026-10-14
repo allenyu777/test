@@ -13,19 +13,47 @@ function assetBase(): string {
 function localWorker(lang: OcrLang): Promise<TesseractWorker> {
   let worker = workers.get(lang)
   if (!worker) {
-    worker = import('tesseract.js').then(({ createWorker }) =>
-      createWorker(lang.split('+'), 1 /* 只用 LSTM 模型 */, {
-        workerPath: assetBase() + 'worker.min.js',
-        corePath: assetBase() + 'core',
-        langPath: assetBase() + 'lang',
-        workerBlobURL: false,
-        gzip: true,
-        // 识别数据缓存在本机，之后离线也能用
-        cacheMethod: 'write',
-      }),
-    )
-    worker.catch(() => workers.delete(lang))
-    workers.set(lang, worker)
+    // tesseract.js 在识别数据下载失败时不会结束等待，这里自己加上出错处理和超时
+    worker = new Promise<TesseractWorker>((resolve, reject) => {
+      let settled = false
+      const fail = (e: unknown) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        reject(e instanceof Error ? e : new Error('本机识别引擎加载失败，请联网后点「继续识别」'))
+      }
+      const timer = setTimeout(() => fail(new Error('下载识别数据超时，请检查网络后点「继续识别」')), 120_000)
+      import('tesseract.js')
+        .then(({ createWorker }) =>
+          createWorker(lang.split('+'), 1 /* 只用 LSTM 模型 */, {
+            workerPath: assetBase() + 'worker.min.js',
+            corePath: assetBase() + 'core',
+            langPath: assetBase() + 'lang',
+            workerBlobURL: false,
+            gzip: true,
+            // 识别数据缓存在本机，之后离线也能用
+            cacheMethod: 'write',
+            errorHandler: () => fail(new Error('识别数据下载失败，请联网后点「继续识别」')),
+          }),
+        )
+        .then(
+          w => {
+            if (settled) {
+              w.terminate().catch(() => {})
+              return
+            }
+            settled = true
+            clearTimeout(timer)
+            resolve(w)
+          },
+          fail,
+        )
+    })
+    const current = worker
+    current.catch(() => {
+      if (workers.get(lang) === current) workers.delete(lang)
+    })
+    workers.set(lang, current)
   }
   return worker
 }
@@ -45,8 +73,20 @@ export async function releaseLocalOcr() {
 
 async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise<string> {
   const worker = await localWorker(lang)
-  const { data } = await worker.recognize(canvas)
-  return data.text ?? ''
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // 识别卡住：释放引擎，下次重新创建
+      releaseLocalOcr()
+      reject(new Error('这一页识别超时'))
+    }, 180_000)
+  })
+  try {
+    const { data } = await Promise.race([worker.recognize(canvas), timeout])
+    return data.text ?? ''
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const LANG_NAMES: Record<OcrLang, string> = {

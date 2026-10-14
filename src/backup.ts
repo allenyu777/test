@@ -76,6 +76,12 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const current = findLocal(meta)
     if (current) {
       idMap.set(meta.id, current.id)
+      // 本机这本还在文字识别中：正文不完整，无法按比例换算位置，保留本机进度
+      const partial = !!current.ocr && current.ocr.status !== 'done' && current.id !== meta.id
+      if (partial) {
+        books++
+        continue
+      }
       let local: Book | null = null
       if (current.id !== meta.id) {
         const content = await db.getContent(current.id)
@@ -107,6 +113,10 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     }
     const content = JSON.parse(strFromU8(contentFile)) as BookContent
     const full: BookMeta = { ...meta, cover: cover ? cover.slice().buffer : null }
+    // 备份时还没识别完的书：原始 PDF 不在备份里，已识别的部分可以听，剩下的要重新导入
+    if (full.ocr && full.ocr.status !== 'done') {
+      full.ocr = { ...full.ocr, status: 'error', error: '原始 PDF 不在本机，请重新导入以继续识别' }
+    }
     await db.saveBook(full, content)
     idMap.set(meta.id, meta.id)
     books++

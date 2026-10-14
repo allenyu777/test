@@ -49,6 +49,8 @@ export function Reader({ id }: { id: string }) {
           return
         }
         player.open(r.meta, r.book)
+        // 正在看的书优先识别
+        if (r.meta.ocr && r.meta.ocr.status !== 'done') ocrRunner.prioritize(r.meta.id)
         setState(r)
       })
       .catch(() => alive && setMissing(true))
@@ -227,6 +229,18 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     }
     updateLocate()
   }, [section])
+
+  // 识别出新页面后目录可能重新划分：继续显示原来那部分内容所在的分段
+  const shownStart = useRef<number | null>(null)
+  useEffect(() => {
+    shownStart.current = book.sections[section]?.start ?? null
+  }, [section])
+  useEffect(() => {
+    const start = shownStart.current
+    if (start == null) return
+    const target = book.sectionIndex(start)
+    if (target !== sectionRef.current) setSection(target)
+  }, [ocrDone])
 
   // 笔记变化会重绘句子，重新加上高亮
   useEffect(() => applyHighlight('none'), [notesMap])

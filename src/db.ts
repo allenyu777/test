@@ -36,6 +36,8 @@ export interface OcrInfo {
   lang: OcrLang
   status: 'running' | 'paused' | 'done' | 'error'
   error?: string
+  /** 最近几页页首页尾的短行（用来认出页眉） */
+  edges?: string[]
 }
 
 /** 原始文件（扫描版 PDF 识别过程中需要） */
@@ -164,6 +166,50 @@ export async function deleteBook(id: string) {
     if (n.audioId) await tx.objectStore('audio').delete(n.audioId)
   }
   await tx.done
+}
+
+/**
+ * 保存一页识别结果：正文和书籍信息在同一个事务里写入。
+ * 书已被删除时什么都不写，返回 null；用户在识别途中点了暂停时保留暂停状态。
+ */
+export async function saveOcrProgress(
+  id: string,
+  content: BookContent,
+  patch: Partial<BookMeta>,
+  /** 还没有当前章节时用这个（不覆盖播放器记下的章节） */
+  defaultChapter?: string,
+): Promise<BookMeta | null> {
+  const d = await db()
+  const tx = d.transaction(['books', 'contents'], 'readwrite')
+  const books = tx.objectStore('books')
+  const current = await books.get(id)
+  if (!current) {
+    await tx.done
+    return null
+  }
+  let ocr = patch.ocr ?? current.ocr
+  if (ocr && current.ocr?.status === 'paused' && ocr.status === 'running') ocr = { ...ocr, status: 'paused' }
+  const next: BookMeta = { ...current, ...patch, ocr }
+  if (!next.chapter && defaultChapter) next.chapter = defaultChapter
+  await books.put(next)
+  await tx.objectStore('contents').put(content)
+  await tx.done
+  return next
+}
+
+/** 只改识别状态（在事务里与最新的记录合并） */
+export async function patchOcr(id: string, patch: Partial<OcrInfo>): Promise<OcrInfo | null> {
+  const d = await db()
+  const tx = d.transaction('books', 'readwrite')
+  const current = await tx.store.get(id)
+  if (!current?.ocr) {
+    await tx.done
+    return null
+  }
+  const ocr = { ...current.ocr, ...patch }
+  await tx.store.put({ ...current, ocr })
+  await tx.done
+  return ocr
 }
 
 export async function saveFile(record: FileRecord) {

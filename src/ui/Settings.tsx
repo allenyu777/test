@@ -319,7 +319,7 @@ export function SettingsPage() {
         </div>
       </div>
       <div class="about">
-        听书 v1.1 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
+        听书 v1.2 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}

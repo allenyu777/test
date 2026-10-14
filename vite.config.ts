@@ -65,9 +65,14 @@ function serviceWorker(): Plugin {
       const hash = createHash('sha256')
       for (const f of assets.sort()) hash.update(f).update(readFileSync(join(outDir, f)))
       const version = hash.digest('hex').slice(0, 12)
+      const assetHash = createHash('sha256')
+      for (const f of files.filter(f => f.startsWith('pdfjs/') || f.startsWith('tesseract/')).sort()) {
+        assetHash.update(f).update(readFileSync(join(outDir, f)))
+      }
       const template = readFileSync('src/sw-template.js', 'utf8')
       const source = template
         .replace('__VERSION__', version)
+        .replace('__ASSET_VERSION__', assetHash.digest('hex').slice(0, 12))
         .replace('__ASSETS__', JSON.stringify(['./', ...assets.map(f => './' + f)], null, 1))
       writeFileSync(join(outDir, 'sw.js'), source)
     },
