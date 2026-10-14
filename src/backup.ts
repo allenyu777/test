@@ -40,6 +40,12 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
 }
 
 /** 按笔记引用的原文，在本机这本书里找到对应位置（找不到就保持原位） */
+function mergeChapterPos(a: BookMeta['chapterPos'], b: BookMeta['chapterPos']): BookMeta['chapterPos'] {
+  const merged = { ...a }
+  for (const [key, mark] of Object.entries(b ?? {})) if (!merged[key] || merged[key].t < mark.t) merged[key] = mark
+  return merged
+}
+
 /** 按笔记引用的原文在书里找位置（离原位置最近的那处） */
 function findQuote(book: Book, note: Note): Pick<Note, 'b' | 'o'> | null {
   const needle = note.quote.slice(0, 40)
@@ -166,6 +172,8 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
           rate: meta.rate,
           voice: meta.voice,
           finished: meta.finished,
+          // 同一本书（段落号一致）才合并各章节读到的位置，每章保留较新的
+          ...(current.id === meta.id ? { chapterPos: mergeChapterPos(current.chapterPos, meta.chapterPos) } : {}),
         })
         progressUpdated.push(current.id)
       }

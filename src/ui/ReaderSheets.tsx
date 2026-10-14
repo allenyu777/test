@@ -24,28 +24,53 @@ import { Sheet, Switch } from './Sheet'
 import { toast } from './toast'
 
 /* ---------- 目录 ---------- */
-export function TocSheet({ book, onClose, onJump }: { book: Book; onClose: () => void; onJump: (b: number) => void }) {
+export function TocSheet({
+  book,
+  onClose,
+  onJump,
+}: {
+  book: Book
+  onClose: () => void
+  /** fromStart：从这一章开头读（否则读过一部分的章节接着上次的位置读） */
+  onJump: (b: number, fromStart?: boolean) => void
+}) {
   const pos = useStore(player.store, s => s.pos)
   const current = book.tocIndex(pos.b)
   const listRef = useRef<HTMLDivElement>(null)
+  // 每一章上次读到的位置
+  const resumes = useMemo(() => book.toc.map(t => player.chapterResume(t.b)), [book])
   useLayoutEffect(() => {
     listRef.current?.querySelector('.current')?.scrollIntoView({ block: 'center' })
   }, [])
   return (
     <Sheet title={`目录 · ${book.toc.length}`} onClose={onClose}>
       {!book.toc.length && <div class="muted">这本书没有目录</div>}
+      {resumes.some(Boolean) && <div class="hint small">读过一部分的章节，点一下会接着上次的位置读；点「从头」从这一章开头读。</div>}
       <div ref={listRef}>
-        {book.toc.map((t, i) => (
-          <button
-            key={i}
-            class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
-            style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
-            onClick={() => onJump(t.b)}
-          >
-            <span>{t.title}</span>
-            <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
-          </button>
-        ))}
+        {book.toc.map((t, i) => {
+          const resume = resumes[i]
+          return (
+            <div class="toc-row" key={i}>
+              <button
+                class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
+                style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
+                onClick={() => onJump(t.b)}
+              >
+                <span>{t.title}</span>
+                {resume ? (
+                  <span class="pct resume">读到 {Math.floor(player.chapterPercent(resume))}%</span>
+                ) : (
+                  <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
+                )}
+              </button>
+              {resume && (
+                <button class="toc-restart" onClick={() => onJump(t.b, true)} aria-label={`从头读 ${t.title}`}>
+                  从头
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </Sheet>
   )

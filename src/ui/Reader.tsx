@@ -306,6 +306,13 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     } else requestAnimationFrame(() => applyHighlight('center'))
   }
 
+  // 目录跳转：读过一部分的章节接着上次的位置读
+  const jumpToChapter = (b: number, fromStart = false) => {
+    const { pos, start, resumed } = player.chapterTarget(b, fromStart)
+    jumpTo(pos)
+    if (resumed) player.toastResumed(pos, () => jumpTo(start))
+  }
+
   const goSection = (index: number) => {
     if (player.state.status === 'playing') setFollowing(false)
     pendingScroll.current = 'top'
@@ -500,7 +507,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
         onPlayFrom={() => playFrom()}
       />
 
-      {sheet?.type === 'toc' && <TocSheet book={book} onClose={() => setSheet(null)} onJump={b => jumpTo({ b, o: 0 })} />}
+      {sheet?.type === 'toc' && <TocSheet book={book} onClose={() => setSheet(null)} onJump={jumpToChapter} />}
       {sheet?.type === 'notes' && (
         <NotesSheet
           book={book}
