@@ -14,16 +14,24 @@ const LANGS: [OcrLang, string][] = [
 ]
 
 /** 导入扫描版 PDF 时选择识别方式 */
-export function ScanSheet({ name, pages, onDone }: { name: string; pages: number; onDone: (choice: ScanChoice | null) => void }) {
+interface Props {
+  name: string
+  pages: number
+  reason: 'scanned' | 'garbled'
+  langHint: OcrLang
+  onDone: (choice: ScanChoice | null) => void
+}
+
+export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
   const cloud = cloudOcrReady()
   const [engine, setEngine] = useState<OcrEngine>('local')
-  const [lang, setLang] = useState<OcrLang>('chi_sim')
+  const [lang, setLang] = useState<OcrLang>(langHint)
   // 本机识别在手机上大约每页 5 秒；云端约 3 秒
   const estimate = formatDuration(pages * (engine === 'local' ? 5 : 3))
 
   return (
     <Sheet
-      title="这是扫描版 PDF"
+      title={reason === 'garbled' ? '这本 PDF 的文字是乱码' : '这是扫描版 PDF'}
       onClose={() => onDone(null)}
       footer={
         <>
@@ -39,7 +47,10 @@ export function ScanSheet({ name, pages, onDone }: { name: string; pages: number
       <div class="hint">
         <b style={{ wordBreak: 'break-all' }}>{name}</b>
         <br />
-        共 {pages} 页，页面是图片，需要先识别出文字才能朗读。识别在后台逐页进行，前几页识别完就可以开始听，后面的边听边识别。
+        {reason === 'garbled'
+          ? `共 ${pages} 页。PDF 里的字体缺少正确的文字编码，直接读取会是乱码（繁体或老版本 PDF 常见）。可以按页面图片重新识别文字后朗读，文字正常的页面会直接使用。`
+          : `共 ${pages} 页，页面是图片，需要先识别出文字才能朗读。`}
+        识别在后台逐页进行，前几页识别完就可以开始听，后面的边听边识别。
       </div>
       <div class="field">
         <span class="label">识别方式</span>

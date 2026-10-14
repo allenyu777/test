@@ -6,6 +6,7 @@ import { importFiles, library, loadBook, removeBook, updateBookMeta } from '../l
 import { buildNotesFile } from '../notes/export'
 import { ACCEPT, FORMAT_LABELS } from '../parsers'
 import { createScannedBook, type ScanChoice } from '../ocr/importScanned'
+import type { ScannedPdfError } from '../parsers/pdf'
 import { ocrRunner } from '../ocr/runner'
 import { player } from '../player'
 import { settings, updateSettings } from '../settings'
@@ -66,7 +67,7 @@ export function Library() {
   const [query, setQuery] = useState('')
   const [menu, setMenu] = useState<BookMeta | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [scanAsk, setScanAsk] = useState<{ file: File; pages: number; resolve: (c: ScanChoice | null) => void } | null>(null)
+  const [scanAsk, setScanAsk] = useState<{ file: File; scanned: ScannedPdfError; resolve: (c: ScanChoice | null) => void } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const sorted = useMemo(() => {
@@ -104,7 +105,7 @@ export function Library() {
       const added = await importFiles(list, {
         // 扫描版 PDF：问用户用哪种方式识别文字
         onScanned: (file, scanned, setProgress) =>
-          new Promise<ScanChoice | null>(resolve => setScanAsk({ file, pages: scanned.pages, resolve })).then(choice =>
+          new Promise<ScanChoice | null>(resolve => setScanAsk({ file, scanned, resolve })).then(choice =>
             choice ? createScannedBook(file, scanned, choice, setProgress) : null,
           ),
       })
@@ -315,7 +316,9 @@ export function Library() {
       {scanAsk && (
         <ScanSheet
           name={scanAsk.file.name}
-          pages={scanAsk.pages}
+          pages={scanAsk.scanned.pages}
+          reason={scanAsk.scanned.reason}
+          langHint={scanAsk.scanned.langHint}
           onDone={choice => {
             scanAsk.resolve(choice)
             setScanAsk(null)
