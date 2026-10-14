@@ -2,6 +2,8 @@
 import { BookBuilder, type ParsedBook, type TocEntry } from '../core/book'
 import { chapterLevel } from '../core/chapters'
 import { cjkRatio, detectLang, isCjkChar } from '../core/text'
+import type { OcrLang } from '../db'
+import { garbleRatio, guessOcrLang, isGarbled } from './garble'
 import { titleFromFileName } from './txt'
 import type { Progress } from './foliate'
 
@@ -76,13 +78,14 @@ export function stripHeadersFooters(pages: Line[][]): Line[][] {
   if (pages.length < 5) return pages.map(lines => lines.filter(l => !PAGE_NUMBER.test(l.text)))
   const counts = new Map<string, number>()
   for (const lines of pages) {
-    const edge = new Set([...lines.slice(0, 2), ...lines.slice(-2)].map(l => normalizeRepeat(l.text)))
+    // 只看每页第一行和最后一行（页眉、页脚、页码所在）
+    const edge = new Set([...lines.slice(0, 1), ...lines.slice(-1)].map(l => normalizeRepeat(l.text)))
     for (const key of edge) counts.set(key, (counts.get(key) ?? 0) + 1)
   }
-  const threshold = Math.max(3, pages.length * 0.3)
+  const threshold = Math.max(3, pages.length * 0.5)
   return pages.map(lines =>
     lines.filter((l, i) => {
-      const isEdge = i < 2 || i >= lines.length - 2
+      const isEdge = i === 0 || i === lines.length - 1
       if (!isEdge) return true
       if (PAGE_NUMBER.test(l.text)) return false
       // 页眉页脚一般很短（书名、章节名）
@@ -147,14 +150,16 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
   return pageStarts
 }
 
-/** 扫描版 PDF：没有文字层，需要先做文字识别 */
+/** 扫描版（没有文字层）或文字层是乱码的 PDF：需要按页面图片识别文字 */
 export class ScannedPdfError extends Error {
   constructor(
     readonly pages: number,
     readonly title: string,
     readonly author: string,
+    readonly reason: 'scanned' | 'garbled' = 'scanned',
+    readonly langHint: OcrLang = 'chi_sim',
   ) {
-    super('这是扫描版 PDF，需要先识别文字')
+    super(reason === 'garbled' ? '这本 PDF 的文字是乱码，需要重新识别文字' : '这是扫描版 PDF，需要先识别文字')
   }
 }
 
@@ -227,6 +232,41 @@ export async function renderPage(pdf: PdfDocument, index: number, targetWidth = 
   }
 }
 
+export interface OutlineItem {
+  title: string
+  /** 页码（从 0 开始） */
+  page: number
+  level: number
+}
+
+/** 读取 PDF 书签 */
+export async function readOutline(pdf: PdfDocument): Promise<OutlineItem[]> {
+  const result: OutlineItem[] = []
+  try {
+    const outline = await pdf.getOutline()
+    const walk = async (items: typeof outline, level: number) => {
+      for (const item of items ?? []) {
+        try {
+          let dest = item.dest
+          if (typeof dest === 'string') dest = await pdf.getDestination(dest)
+          if (Array.isArray(dest) && dest[0] != null) {
+            const ref = dest[0]
+            const page = typeof ref === 'number' ? ref : await pdf.getPageIndex(ref)
+            if (item.title?.trim()) result.push({ title: item.title.trim(), page, level })
+          }
+        } catch {
+          // 忽略无效书签
+        }
+        await walk(item.items, level + 1)
+      }
+    }
+    await walk(outline, 0)
+  } catch {
+    // 没有书签
+  }
+  return result
+}
+
 export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress?: Progress): Promise<ParsedBook> {
   const pdf = await openPdf(buffer)
 
@@ -239,41 +279,33 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
       page.cleanup()
       if (i % 5 === 0) onProgress?.(i / pdf.numPages, `正在提取文字 ${i}/${pdf.numPages} 页`)
     }
-    const totalChars = pages.reduce((sum, lines) => sum + lines.reduce((s, l) => s + l.text.length, 0), 0)
-    const textPages = pages.filter(lines => lines.reduce((s, l) => s + l.text.length, 0) >= 20).length
+    const pageText = pages.map(lines => lines.map(l => l.text).join('\n'))
+    const garbled = pageText.map(t => isGarbled(t))
+    const garbledPages = garbled.filter(Boolean).length
+    const goodText = pageText.filter((_, i) => !garbled[i])
+    const totalChars = goodText.reduce((sum, t) => sum + t.length, 0)
+    const textPages = goodText.filter(t => t.length >= 20).length
+    // 字体缺少正确的字符映射时，提取出的文字是乱码：这些页按图片识别
+    const tooManyGarbled = garbledPages >= Math.max(3, pdf.numPages * 0.05)
     // 大部分页面没有文字层：按扫描版处理，交给文字识别
-    if (totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
+    if (tooManyGarbled || totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
       const info = await pdfInfo(pdf, fileName)
-      throw new ScannedPdfError(pdf.numPages, info.title, info.author)
+      // 乱码页里的标题等行常常是正常的，也拿来判断繁简
+      const cleanLines = pages.flat().map(l => l.text).filter(t => garbleRatio(t) === 0)
+      const hint = guessOcrLang([info.title, info.author, ...cleanLines].join('\n').slice(0, 20000))
+      throw new ScannedPdfError(pdf.numPages, info.title, info.author, garbledPages ? 'garbled' : 'scanned', hint)
     }
+    // 个别乱码页（例如公式页）直接跳过
+    for (let i = 0; i < pages.length; i++) if (garbled[i]) pages[i] = []
 
     const builder = new BookBuilder()
     const pageStarts = linesToParagraphs(stripHeadersFooters(pages), builder)
 
     // PDF 书签作为目录
     const toc: TocEntry[] = []
-    try {
-      const outline = await pdf.getOutline()
-      const walk = async (items: typeof outline, level: number) => {
-        for (const item of items ?? []) {
-          try {
-            let dest = item.dest
-            if (typeof dest === 'string') dest = await pdf.getDestination(dest)
-            if (Array.isArray(dest) && dest[0] != null) {
-              const ref = dest[0]
-              const pageIndex = typeof ref === 'number' ? ref : await pdf.getPageIndex(ref)
-              const b = pageStarts[pageIndex]
-              if (b != null) toc.push({ title: item.title, b, level })
-            }
-          } catch {
-            // 忽略无效书签
-          }
-          await walk(item.items, level + 1)
-        }
-      }
-      await walk(outline, 0)
-    } catch {
-      // 没有书签
+    for (const item of await readOutline(pdf)) {
+      const b = pageStarts[item.page]
+      if (b != null) toc.push({ title: item.title, b, level: item.level })
     }
 
     const { title, author } = await pdfInfo(pdf, fileName)

@@ -14,9 +14,27 @@ function joinLines(lines: string[]): string {
   return out
 }
 
+const HAN = '\\u3400-\\u9fff\\uf900-\\ufaff\\u3000-\\u303f\\uff00-\\uffef'
+const FULL: Record<string, string> = { ',': '，', ':': '：', ';': '；', '!': '！', '?': '？', '(': '（', ')': '）' }
+// 中文之间被识别成半角的标点（"小屋 , 窗外"）换成全角，并去掉两边的空格
+const halfPunctRe = new RegExp(`([${HAN}])[ \\t]*([,:;!?()])[ \\t]*(?=[${HAN}]|$)`, 'gm')
+const periodRe = new RegExp(`([${HAN}])\\s*\\.(?=\\s*([${HAN}]|$))`, 'gm')
+// 中文和数字之间的空格（"第 1 段"）
+const hanDigitRe = new RegExp(`([${HAN}])[ \\t]+(?=\\d)|(\\d)[ \\t]+(?=[${HAN}])`, 'g')
+
+/** 中文识别结果的标点和空格整理 */
+export function tidyChinese(text: string): string {
+  const fixed = removeCjkSpaces(text)
+    .replace(halfPunctRe, (_, a: string, p: string) => a + FULL[p])
+    .replace(periodRe, '$1。')
+    .replace(hanDigitRe, (_, a?: string, d?: string) => a ?? d ?? '')
+  // 标点换成全角后，两侧可能又出现中文之间的空格
+  return removeCjkSpaces(fixed)
+}
+
 /** 识别文字：空行分段，段内换行合并，去掉页码和中文字间空格 */
 export function ocrTextToParagraphs(text: string): string[] {
-  return removeCjkSpaces(text.replace(/\r\n?/g, '\n'))
+  return tidyChinese(text.replace(/\r\n?/g, '\n'))
     .split(/\n\s*\n/)
     .map(block =>
       joinLines(

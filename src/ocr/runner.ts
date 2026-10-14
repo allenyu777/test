@@ -5,22 +5,33 @@ import { normalizeText } from '../core/text'
 import * as db from '../db'
 import type { BookMeta, OcrInfo } from '../db'
 import { extendLoadedBook, library, patchBookLocal } from '../library'
-import { pageParagraphs, renderPage } from '../parsers/pdf'
+import { isGarbled } from '../parsers/garble'
+import { pageParagraphs, readOutline, renderPage, type OutlineItem } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
 import { ocrTextToParagraphs } from './text'
 
 type Listener = (bookId: string) => void
 
-/** 根据已识别的段落重新生成目录和分段：识别出章节就用章节，否则每 10 页一个目录项 */
-export function rebuildOcrContent(content: BookContent) {
-  const hits = detectChapters(content.blocks)
+/**
+ * 根据已识别的段落重新生成目录和分段：
+ * 优先用 PDF 自带的书签，其次用识别出的章节标题，都没有就每 10 页一个目录项
+ */
+export function rebuildOcrContent(content: BookContent, outline: OutlineItem[] = []) {
+  const pages = content.pages ?? []
+  const fromOutline: TocEntry[] = []
+  for (const item of outline) {
+    const b = pages[item.page]
+    if (b != null && b < content.blocks.length) fromOutline.push({ title: item.title, b, level: item.level })
+  }
+  const hits = fromOutline.length ? [] : detectChapters(content.blocks)
   content.heads = {}
   for (const h of hits) content.heads[h.index] = h.level + 2
-  let toc: TocEntry[] = hits.map(h => ({ title: content.blocks[h.index], b: h.index, level: h.level }))
-  if (toc.length < 2) {
+  // 书签标题正好是某个段落时，按标题样式显示
+  for (const t of fromOutline) if (content.blocks[t.b] === t.title) content.heads[t.b] = Math.min(6, t.level + 1)
+  let toc: TocEntry[] = fromOutline.length ? fromOutline : hits.map(h => ({ title: content.blocks[h.index], b: h.index, level: h.level }))
+  if (toc.length < 2 && !fromOutline.length) {
     toc = []
-    const pages = content.pages ?? []
     for (let p = 0; p < pages.length; p += 10) {
       const b = pages[p]
       if (b == null || b >= content.blocks.length || toc.some(t => t.b === b)) continue
@@ -30,6 +41,40 @@ export function rebuildOcrContent(content: BookContent) {
   }
   content.toc = toc
   content.sections = content.blocks.length ? buildSections(content.blocks, toc) : []
+}
+
+/** 两段文字共有字符的比例（以较短的一段为准） */
+function overlap(a: string, b: string): number {
+  const x = a.replace(/\s+/g, '')
+  const y = b.replace(/\s+/g, '')
+  if (!x || !y) return 0
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x]
+  const pool = [...long]
+  let hit = 0
+  for (const ch of short) {
+    const i = pool.indexOf(ch)
+    if (i >= 0) {
+      hit++
+      pool.splice(i, 1)
+    }
+  }
+  return hit / short.length
+}
+
+/** 书签指向这一页时，页首识别不准的章节标题用书签标题替换 */
+export function applyOutlineTitles(paragraphs: string[], titles: string[]): string[] {
+  const out = paragraphs.slice()
+  for (const title of titles) {
+    const limit = Math.min(3, out.length)
+    for (let i = 0; i < limit; i++) {
+      const p = out[i]
+      if (p.length <= title.length * 2 + 6 && overlap(p, title) >= 0.6) {
+        out[i] = title
+        break
+      }
+    }
+  }
+  return out
 }
 
 class OcrRunner {
@@ -111,6 +156,7 @@ class OcrRunner {
     content.pages ??= []
     const { openPdf } = await import('../parsers/pdf')
     const pdf = await openPdf(file.data)
+    const outline = await readOutline(pdf)
     this.active++
     setWakeLock(true, 'ocr')
     let ocr: OcrInfo = { ...meta.ocr }
@@ -121,13 +167,14 @@ class OcrRunner {
         if (!options.untilText && (!live || live.ocr?.status !== 'running')) return
         options.onPage?.(p, ocr.pages)
 
-        const paragraphs = await this.recognizePage(pdf, p, ocr)
+        const titles = outline.filter(item => item.page === p).map(item => item.title)
+        const paragraphs = applyOutlineTitles(await this.recognizePage(pdf, p, ocr), titles)
         content.pages[p] = content.blocks.length
         for (const text of paragraphs) {
           const t = normalizeText(text)
           if (t) content.blocks.push(t)
         }
-        rebuildOcrContent(content)
+        rebuildOcrContent(content, outline)
         // 识别这一页期间用户可能点了暂停：以最新状态为准，不要覆盖
         const liveStatus = library.get().books.find(b => b.id === id)?.ocr?.status ?? ocr.status
         const finished = p + 1 >= ocr.pages
@@ -159,7 +206,8 @@ class OcrRunner {
   private async recognizePage(pdf: Awaited<ReturnType<typeof import('../parsers/pdf')['openPdf']>>, index: number, ocr: OcrInfo) {
     // 这一页本身有文字层（扫描版里夹着的文字页）就直接用
     const text = await pageParagraphs(pdf, index)
-    if (text.join('').length >= 20) return text
+    const joined = text.join('\n')
+    if (joined.length >= 20 && !isGarbled(joined)) return text
     const canvas = await renderPage(pdf, index)
     try {
       return ocrTextToParagraphs(await recognizeCanvas(canvas, ocr.engine, ocr.lang))
