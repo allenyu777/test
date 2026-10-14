@@ -19,7 +19,7 @@ export interface Settings {
   /** 各语言默认使用的声音（zh / en / ja …） */
   voices: Record<string, VoiceChoice>
   azure: { key: string; region: string }
-  openai: { baseUrl: string; key: string; model: string; instructions: string; transcribeModel: string }
+  openai: { baseUrl: string; key: string; model: string; instructions: string; transcribeModel: string; visionModel: string }
   theme: Theme
   fontSize: number
   lineHeight: number
@@ -50,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
     model: 'gpt-4o-mini-tts',
     instructions: '用自然、平稳、富有感情的有声书旁白语气朗读，语速适中，停顿自然。',
     transcribeModel: 'gpt-4o-mini-transcribe',
+    visionModel: 'gpt-4o-mini',
   },
   theme: 'auto',
   fontSize: 19,

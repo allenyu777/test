@@ -4,7 +4,8 @@
 
 ## 功能
 
-- **多格式**：EPUB、MOBI、AZW3、PDF（文字版）、TXT（自动识别 UTF-8 / GBK / Big5）、FB2、DOCX、HTML、Markdown
+- **多格式**：EPUB、MOBI、AZW3、PDF、TXT（自动识别 UTF-8 / GBK / Big5）、FB2、DOCX、HTML、Markdown
+- **扫描版 PDF**：自动识别文字（OCR）。本机识别免费、离线、不上传；也可用 OpenAI 兼容的视觉模型做云端识别。逐页在后台识别，前几页好了就能开始听，边听边识别
 - **声音可选**
   - 系统声音：免费、离线，推荐在 iPhone 上下载「增强 / 高级」版本的中文声音，自然很多
   - Azure 神经语音（推荐）：晓晓、云希等，非常自然；免费额度每月 50 万字；支持锁屏后台连续播放
@@ -38,6 +39,8 @@
 - **Azure**：在 Azure 门户创建「语音服务」资源（定价层选免费 F0），在「密钥和终结点」复制密钥与区域，填到应用「设置」里，点「测试并试听」
 - **OpenAI**：在「设置」填写 API Key，模型默认 `gpt-4o-mini-tts`，可以用「朗读风格」描述想要的语气
 
+关于扫描版 PDF：识别只在 App 位于前台时进行（屏幕会保持常亮），切到后台会暂停，回来后自动继续；书架上会显示「识别中 x/y 页」，可以在书的「⋯」菜单里暂停或继续。
+
 关于锁屏播放：云端声音（Azure / OpenAI）是普通音频，锁屏后可以连续播放并显示锁屏控件。系统声音在锁屏后能否继续取决于 iOS，建议开启「朗读时屏幕常亮」；也可以试试设置里的「锁屏继续朗读（实验）」。
 
 ## 本地开发
@@ -54,5 +57,6 @@ npm run build    # 生产构建，输出到 dist/
 ## 致谢
 
 - [foliate-js](https://github.com/johnfactotum/foliate-js)（MIT）：EPUB / MOBI / AZW3 / FB2 解析
-- [pdf.js](https://github.com/mozilla/pdf.js)（Apache-2.0）：PDF 文字提取
+- [pdf.js](https://github.com/mozilla/pdf.js)（Apache-2.0）：PDF 文字提取和页面渲染
+- [Tesseract.js](https://github.com/naptha/tesseract.js)（Apache-2.0）：扫描版 PDF 的本机文字识别
 - [fflate](https://github.com/101arrowz/fflate)（MIT）、[idb](https://github.com/jakearchibald/idb)（ISC）、[Preact](https://preactjs.com)（MIT）

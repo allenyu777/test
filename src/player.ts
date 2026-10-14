@@ -3,7 +3,8 @@ import { Book, type Pos } from './core/book'
 import { cjkRatio, isSpeakable, speechText } from './core/text'
 import * as db from './db'
 import type { BookMeta } from './db'
-import { coverUrl, patchBookLocal } from './library'
+import { coverUrl, library, patchBookLocal } from './library'
+import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
 import { createStore } from './store'
 import { primeAudio, setWakeLock, startKeepAlive, stopKeepAlive } from './tts/audio'
@@ -88,6 +89,8 @@ class Player {
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private sleepTimer: ReturnType<typeof setTimeout> | null = null
   private stopAt: number | null = null
+  /** 读到已识别内容的末尾，正在等待后面的页面 */
+  private waitingOcr = false
   private saveWarned = false
 
   constructor() {
@@ -95,6 +98,7 @@ class Player {
     document.addEventListener('visibilitychange', () => this.onVisibility())
     window.addEventListener('pagehide', () => this.saveNow())
     this.setupMediaSession()
+    ocrRunner.onExtended(id => this.onBookExtended(id))
     loadSystemVoices().then(() => {
       // 语音列表加载后，重新确认当前书的声音
       if (this.meta && this.store.get().status === 'idle') {
@@ -181,6 +185,7 @@ class Player {
   }
 
   pause() {
+    this.waitingOcr = false
     if (this.state.status !== 'playing') return
     if (!this.engine?.pause()) this.engine?.stop()
     this.setStatus('paused')
@@ -329,10 +334,12 @@ class Player {
     if (!book || !meta) return
     const start = book.speakableFrom(from)
     if (!start) {
-      toast('已经读到全书结尾')
-      this.setStatus('idle')
+      const ocr = this.liveOcr()
+      toast(ocr && ocr.status !== 'done' ? '这一页之后的内容还在识别中，请稍候' : '已经读到全书结尾')
+      this.setStatus(ocr && ocr.status !== 'done' ? 'paused' : 'idle')
       return
     }
+    this.waitingOcr = false
     const engine = this.getEngine()
     if (this.engine && this.engine !== engine) this.engine.stop()
     this.engine = engine
@@ -383,6 +390,12 @@ class Player {
     this.scheduleSave()
   }
 
+  /** 扫描版正在识别的书，最新的识别状态 */
+  private liveOcr() {
+    const id = this.meta?.id
+    return (id && library.get().books.find(b => b.id === id)?.ocr) || this.meta?.ocr || null
+  }
+
   private onFinished(engine: Engine) {
     if (this.engine !== engine) return
     if (this.stopAt != null) {
@@ -392,6 +405,48 @@ class Player {
       this.saveNow()
       return
     }
+    // 扫描版还没识别完：等后面的页面识别出来再接着读
+    const ocr = this.liveOcr()
+    if (ocr && ocr.status !== 'done') {
+      this.saveNow()
+      if (ocr.status === 'running') {
+        this.waitingOcr = true
+        this.store.set({ loading: true })
+        toast('后面的页面还在识别，识别好后会自动接着读')
+      } else {
+        this.setStatus('paused')
+        toast(ocr.status === 'paused' ? '文字识别已暂停，继续识别后才能往下读' : `文字识别出错：${ocr.error ?? ''}`, 'error')
+      }
+      return
+    }
+    this.finishBook()
+  }
+
+  /** 识别出新页面：如果正在等待，就从新内容接着读 */
+  private onBookExtended(id: string) {
+    if (!this.meta || this.meta.id !== id || !this.book) return
+    const ocr = this.liveOcr()
+    this.meta.ocr = ocr
+    if (!this.waitingOcr) return
+    if (this.state.status !== 'playing') {
+      this.waitingOcr = false
+      return
+    }
+    const next = this.book.next(this.state.pos)
+    if (next) {
+      this.waitingOcr = false
+      this.startEngine(next)
+    } else if (!ocr || ocr.status === 'done') {
+      this.waitingOcr = false
+      this.finishBook()
+    } else if (ocr.status !== 'running') {
+      this.waitingOcr = false
+      this.setStatus('paused')
+      toast(ocr.status === 'paused' ? '文字识别已暂停' : `文字识别出错：${ocr.error ?? ''}`, 'error')
+    }
+  }
+
+  private finishBook() {
     this.setStatus('idle')
     // 读完时进度记为 100%，之后再保存也不会把"已读完"改回去
     this.store.set({ percent: 100 })

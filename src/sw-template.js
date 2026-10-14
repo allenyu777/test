@@ -34,10 +34,10 @@ self.addEventListener('fetch', event => {
       caches.match('./', { cacheName: CACHE }).then(cached => cached || fetch(request)))
     return
   }
-  // 预缓存里有就直接用；没有的（如 PDF 的 CMap 文件）首次联网获取后缓存起来
+  // 预缓存里有就直接用；没有的（PDF 字形表、文字识别文件）首次联网获取后缓存起来
   event.respondWith(
     caches.match(request, { ignoreSearch: true }).then(cached => cached || fetch(request).then(response => {
-      if (response.ok && url.pathname.includes('/pdfjs/')) {
+      if (response.ok && /\/(pdfjs|tesseract)\//.test(url.pathname)) {
         const copy = response.clone()
         caches.open(CACHE).then(cache => cache.put(request, copy))
       }

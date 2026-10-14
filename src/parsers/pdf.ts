@@ -147,18 +147,88 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
   return pageStarts
 }
 
-export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress?: Progress): Promise<ParsedBook> {
+/** 扫描版 PDF：没有文字层，需要先做文字识别 */
+export class ScannedPdfError extends Error {
+  constructor(
+    readonly pages: number,
+    readonly title: string,
+    readonly author: string,
+  ) {
+    super('这是扫描版 PDF，需要先识别文字')
+  }
+}
+
+type PdfDocument = Awaited<ReturnType<typeof import('pdfjs-dist/legacy/build/pdf.mjs')['getDocument']>['promise']>
+
+/** 打开 PDF（会复制一份数据，pdf.js 会把传入的数据转交给后台线程） */
+export async function openPdf(data: ArrayBuffer | Uint8Array): Promise<PdfDocument> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const workerUrl = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
   const cMapUrl = import.meta.env.DEV ? '/node_modules/pdfjs-dist/cmaps/' : new URL('pdfjs/cmaps/', document.baseURI).href
-  const pdf = await pdfjs.getDocument({
-    data: new Uint8Array(buffer),
+  const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0))
+  return pdfjs.getDocument({
+    data: bytes,
     cMapUrl,
     cMapPacked: true,
     isEvalSupported: false,
     disableFontFace: true,
   }).promise
+}
+
+async function pdfInfo(pdf: PdfDocument, fileName: string) {
+  let title = ''
+  let author = ''
+  try {
+    const meta = await pdf.getMetadata()
+    const info = meta.info as Record<string, string> | undefined
+    title = info?.Title?.trim() ?? ''
+    author = info?.Author?.trim() ?? ''
+  } catch {
+    // 没有元数据
+  }
+  const fromName = titleFromFileName(fileName)
+  // 很多 PDF 的 Title 是 "Microsoft Word - xxx.doc" 这类无意义内容
+  if (!title || /\.(docx?|pdf|indd|tex)$|^untitled|microsoft word/i.test(title)) title = fromName.title
+  return { title, author: author || fromName.author }
+}
+
+/** 读取某一页的文字层（页码从 0 开始），按段落返回 */
+export async function pageParagraphs(pdf: PdfDocument, index: number): Promise<string[]> {
+  const page = await pdf.getPage(index + 1)
+  try {
+    const content = await page.getTextContent()
+    const builder = new BookBuilder()
+    linesToParagraphs(stripHeadersFooters([groupLines(content.items as TextItemLike[])]), builder)
+    return builder.blocks
+  } finally {
+    page.cleanup()
+  }
+}
+
+/** 把一页渲染成图片（供文字识别），宽度约 targetWidth 像素 */
+export async function renderPage(pdf: PdfDocument, index: number, targetWidth = 1600): Promise<HTMLCanvasElement> {
+  const page = await pdf.getPage(index + 1)
+  try {
+    const base = page.getViewport({ scale: 1 })
+    // iOS 对画布面积有上限，控制在约 1600 万像素以内
+    const scale = Math.min(3, targetWidth / base.width, Math.sqrt(12_000_000 / (base.width * base.height)))
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: ctx, viewport, canvas } as Parameters<typeof page.render>[0]).promise
+    return canvas
+  } finally {
+    page.cleanup()
+  }
+}
+
+export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress?: Progress): Promise<ParsedBook> {
+  const pdf = await openPdf(buffer)
 
   try {
     const pages: Line[][] = []
@@ -170,8 +240,11 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
       if (i % 5 === 0) onProgress?.(i / pdf.numPages, `正在提取文字 ${i}/${pdf.numPages} 页`)
     }
     const totalChars = pages.reduce((sum, lines) => sum + lines.reduce((s, l) => s + l.text.length, 0), 0)
-    if (totalChars < Math.max(50, pdf.numPages * 5)) {
-      throw new Error('这个 PDF 里没有可提取的文字（可能是扫描版图片），暂时无法朗读')
+    const textPages = pages.filter(lines => lines.reduce((s, l) => s + l.text.length, 0) >= 20).length
+    // 大部分页面没有文字层：按扫描版处理，交给文字识别
+    if (totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
+      const info = await pdfInfo(pdf, fileName)
+      throw new ScannedPdfError(pdf.numPages, info.title, info.author)
     }
 
     const builder = new BookBuilder()
@@ -203,22 +276,10 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
       // 没有书签
     }
 
-    let title = ''
-    let author = ''
-    try {
-      const meta = await pdf.getMetadata()
-      const info = meta.info as Record<string, string> | undefined
-      title = info?.Title?.trim() ?? ''
-      author = info?.Author?.trim() ?? ''
-    } catch {
-      // 没有元数据
-    }
-    const fromName = titleFromFileName(fileName)
-    // 很多 PDF 的 Title 是 "Microsoft Word - xxx.doc" 这类无意义内容
-    if (!title || /\.(docx?|pdf|indd|tex)$|^untitled|microsoft word/i.test(title)) title = fromName.title
+    const { title, author } = await pdfInfo(pdf, fileName)
     return {
       title,
-      author: author || fromName.author,
+      author,
       lang: detectLang(builder.blocks.slice(0, 300).join('\n')),
       blocks: builder.blocks,
       heads: builder.heads,

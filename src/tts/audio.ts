@@ -82,26 +82,33 @@ export function stopKeepAlive() {
 
 type WakeLockSentinelLike = { release(): Promise<void>; released?: boolean }
 let wakeLock: WakeLockSentinelLike | null = null
-let wantWake = false
+// 需要常亮的原因（朗读、文字识别），任意一个存在就保持常亮
+const wakeReasons = new Set<string>()
 
-export async function setWakeLock(on: boolean) {
-  wantWake = on
+async function syncWakeLock() {
   const nav = navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<WakeLockSentinelLike> } }
   try {
-    if (on && nav.wakeLock && (!wakeLock || wakeLock.released)) {
+    if (wakeReasons.size && nav.wakeLock && (!wakeLock || wakeLock.released)) {
       wakeLock = await nav.wakeLock.request('screen')
-    } else if (!on && wakeLock) {
-      await wakeLock.release()
+    } else if (!wakeReasons.size && wakeLock) {
+      const lock = wakeLock
       wakeLock = null
+      await lock.release()
     }
   } catch {
     wakeLock = null
   }
 }
 
+export function setWakeLock(on: boolean, reason = 'playback') {
+  if (on) wakeReasons.add(reason)
+  else wakeReasons.delete(reason)
+  return syncWakeLock()
+}
+
 // 页面重新可见时恢复常亮（系统会在切到后台时自动释放）
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && wantWake) setWakeLock(true)
+    if (document.visibilityState === 'visible' && wakeReasons.size) syncWakeLock()
   })
 }

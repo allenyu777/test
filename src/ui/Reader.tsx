@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { Book, Pos } from '../core/book'
 import * as db from '../db'
 import type { BookMeta, Note } from '../db'
-import { loadBook } from '../library'
+import { library, loadBook } from '../library'
+import { ocrRunner } from '../ocr/runner'
 import { copyText } from '../notes/export'
 import { player } from '../player'
 import { settings } from '../settings'
@@ -120,6 +121,9 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   const lineHeight = useStore(settings, s => s.lineHeight)
   const font = useStore(settings, s => s.font)
   const chapter = useStore(player.store, s => s.chapter)
+  // 扫描版识别进度（识别出新页面时重新渲染正文）
+  const ocr = useStore(library, s => s.books.find(b => b.id === meta.id)?.ocr ?? null)
+  const ocrDone = ocr?.done ?? 0
   const [section, setSection] = useState(() => book.sectionIndex(player.state.pos.b))
   const [following, setFollowing] = useState(true)
   const [sheet, setSheet] = useState<SheetState>(null)
@@ -322,7 +326,10 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     })
   }
 
-  const sectionView = useMemo(() => <SectionView book={book} index={section} notesMap={notesMap} />, [book, section, notesMap])
+  const sectionView = useMemo(
+    () => (book.sections[section] ? <SectionView book={book} index={section} notesMap={notesMap} /> : null),
+    [book, section, notesMap, ocrDone],
+  )
   const sec = book.sections[section]
   const prevSec = section > 0 ? book.sections[section - 1] : null
   const nextSec = section < book.sections.length - 1 ? book.sections[section + 1] : null
@@ -381,10 +388,31 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
               <span>下一章 · {nextSec.title}</span>
               <IconChevronRight size={16} />
             </button>
-          ) : (
+          ) : ocr && ocr.status !== 'done' ? null : (
             <span class="muted small">— 全书完 —</span>
           )}
         </div>
+        {ocr && ocr.status !== 'done' && !nextSec && (
+          <div class="hint" style={{ textAlign: 'center', textIndent: 0, fontFamily: 'var(--ui-font)' }}>
+            {ocr.status === 'running'
+              ? `正在识别第 ${Math.min(ocr.done + 1, ocr.pages)} / ${ocr.pages} 页…（需要 App 保持在前台）`
+              : ocr.status === 'paused'
+                ? `文字识别已暂停（${ocr.done}/${ocr.pages} 页）`
+                : `文字识别出错：${ocr.error ?? ''}`}
+            <div style={{ marginTop: '8px' }}>
+              <button
+                class="chip"
+                onClick={e => {
+                  e.stopPropagation()
+                  if (ocr.status === 'running') ocrRunner.pause(meta.id)
+                  else ocrRunner.resume(meta.id)
+                }}
+              >
+                {ocr.status === 'running' ? '暂停识别' : '继续识别'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {showLocate && (
