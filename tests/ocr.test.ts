@@ -41,7 +41,7 @@ describe('garbled text detection', () => {
 })
 
 import { appendPage, applyOutlineTitles, rebuildOcrContent } from '../src/ocr/runner'
-import { continuesAcrossPage, edgeKeys, stripRunningHeads } from '../src/ocr/text'
+import { continuesAcrossPage, edgeKeys, isPlatePage, stripRunningHeads } from '../src/ocr/text'
 import type { BookContent } from '../src/core/book'
 
 describe('outline titles', () => {
@@ -74,6 +74,34 @@ describe('running headers', () => {
     expect(stripRunningHeads(['第一章 風起 23', '個不停。'], recent)).toEqual(['個不停。'])
     expect(stripRunningHeads(['第一章 風起', '23', '個不停。'], edgeKeys(['第一章 風起', '正文。']))).toEqual(['個不停。'])
   })
+  it('handles page numbers glued to a Chinese header after OCR cleanup', () => {
+    const prev = ocrTextToParagraphs('第 一 章 風 起 21\n\n正 文 。')
+    expect(stripRunningHeads(ocrTextToParagraphs('第 一 章 風 起 23\n\n個 不 停 。'), edgeKeys(prev))).toEqual(['個不停。'])
+    expect(stripRunningHeads(['鲁迅全集 23', '正文。'], edgeKeys(['22 鲁迅全集', '正文。']))).toEqual(['正文。'])
+  })
+  it('tolerates a misread character in a chapter running header', () => {
+    expect(stripRunningHeads(['CHAPTER 3 · THE ST0RM 49', 'Text.'], edgeKeys(['CHAPTER 3 · THE STORM 47', 'Text.']))).toEqual(['Text.'])
+    expect(stripRunningHeads(['第一章風起雲湧的年伐', '正文。'], edgeKeys(['第一章風起雲湧的年代', '正文。']))).toEqual(['正文。'])
+  })
+  it('keeps numbered entry headings', () => {
+    for (const [a, b] of [
+      ['Day 11', 'Day 12'],
+      ['SCENE II', 'SCENE III'],
+      ['Sonnet XVIII', 'Sonnet XIX'],
+      ['1943年3月3日', '1943年3月5日'],
+      ['Saturday, 20 June 1942', 'Sunday, 21 June 1942'],
+      ['第3讲', '第4讲'],
+    ]) {
+      expect(stripRunningHeads([b, '正文。'], edgeKeys([a, '正文。']))).toEqual([b, '正文。'])
+    }
+  })
+  it('keeps section numbers and years under a removed header', () => {
+    expect(stripRunningHeads(['48 THE FISHERMAN\'S SON', 'III', 'In the spring the boats went out.'], edgeKeys(["THE FISHERMAN'S SON 46", 'x.']))).toEqual([
+      'III',
+      'In the spring the boats went out.',
+    ])
+    expect(stripRunningHeads(['往事並不如煙', '1949', '那一年。'], edgeKeys(['往事並不如煙', '正文。']))).toEqual(['1949', '那一年。'])
+  })
   it('keeps headers seen for the first time, sentences and bookmark titles', () => {
     expect(stripRunningHeads(['第三章 風波', '正文。'], [])).toEqual(['第三章 風波', '正文。'])
     expect(stripRunningHeads(['好。', '正文。'], ['好'])).toEqual(['好。', '正文。'])
@@ -93,6 +121,13 @@ describe('pages joined mid-sentence', () => {
     appendPage(content, 1, ['河邊一直往前走。', '天黑了。'])
     expect(content.blocks).toEqual(['第一章 開始', '清晨的陽光照進小屋，窗外的鳥兒開始歌唱，她推開門走了出去，沿著河邊一直往前走。', '天黑了。'])
     expect(content.pages).toEqual([0, 2])
+  })
+  it('does not join a first-time header with a page number or a picture caption', () => {
+    expect(continuesAcrossPage('Mr. Dursley was a big, beefy man, although he did have a', 'THE BOY WHO LIVED 3')).toBe(false)
+    const long = '心裡想著昨天發生的事情，她推開門走了出去，沿著'
+    expect(continuesAcrossPage(long, '圖3 1936年冬，作者（左二）與紅軍戰士在延安窯洞前合影')).toBe(false)
+    expect(isPlatePage(['圖3 1936年冬，作者（左二）與紅軍戰士在延安窯洞前合影'])).toBe(true)
+    expect(isPlatePage(['河邊一直往前走，天已經黑了下來。'])).toBe(false)
   })
   it('does not join headings, bookmark titles or across a blank page', () => {
     const long = '清晨的陽光照進小屋，窗外的鳥兒開始歌唱，她推開門走了出去，沿著'

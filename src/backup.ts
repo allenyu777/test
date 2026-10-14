@@ -83,38 +83,55 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const current = findLocal(meta)
     if (current) {
       idMap.set(meta.id, current.id)
-      // 以前从备份恢复的、没识别完的书，这次备份里识别得更多：换成更完整的正文
+      // 本机这本没识别完而且停着（例如以前从备份恢复的、原始 PDF 不在本机），这次备份里识别得更多：换成更完整的正文
+      const stalled = !!current.ocr && current.ocr.status !== 'done' && current.ocr.status !== 'running'
+      const hasFile = stalled ? !!(await db.getFile(current.id)) : false
       const behind =
-        current.id === meta.id &&
-        !!current.ocr &&
-        current.ocr.status !== 'done' &&
-        current.ocr.status !== 'running' &&
+        stalled &&
+        (current.id === meta.id || !hasFile) &&
         !!contentFile &&
         !!meta.ocr &&
-        (meta.ocr.status === 'done' || meta.ocr.done > current.ocr.done)
+        (meta.ocr.status === 'done' || meta.ocr.done > current.ocr!.done)
       if (behind) {
-        const content = JSON.parse(strFromU8(contentFile)) as BookContent
+        const content: BookContent = { ...(JSON.parse(strFromU8(contentFile!)) as BookContent), id: current.id }
+        const fresh = new Book(content)
         const newer = (meta.lastReadAt ?? 0) > (current.lastReadAt ?? 0)
-        const full: BookMeta = {
-          ...meta,
-          ...(newer
-            ? {}
-            : {
-                pos: current.pos,
-                percent: current.percent,
-                chapter: current.chapter,
-                lastReadAt: current.lastReadAt,
-                finished: current.finished,
-                rate: current.rate,
-                voice: current.voice,
-              }),
-          cover: current.cover ?? (cover ? cover.slice().buffer : null),
+        let kept: Partial<BookMeta> = {}
+        if (!newer) {
+          // 保留本机进度；两边的识别结果不同时，按字数换算到新正文里
+          let pos = current.pos
+          if (current.id !== meta.id) {
+            const old = await db.getContent(current.id)
+            if (old) {
+              const before = new Book(old)
+              pos = fresh.posAtChar(before.charOffset(before.clamp(current.pos)))
+            }
+          }
+          kept = {
+            pos,
+            percent: current.percent,
+            chapter: current.chapter,
+            lastReadAt: current.lastReadAt,
+            finished: current.finished,
+            rate: current.rate,
+            voice: current.voice,
+          }
+        } else if (current.id !== meta.id) {
+          kept = { pos: fresh.posAtPercent(meta.percent) }
         }
+        const full: BookMeta = { ...meta, id: current.id, ...kept, cover: current.cover ?? (cover ? cover.slice().buffer : null) }
         if (full.ocr && full.ocr.status !== 'done') {
           // 本机有原始 PDF 就从备份的进度接着识别，没有就要重新导入
-          full.ocr = (await db.getFile(current.id))
+          full.ocr = hasFile
             ? { ...full.ocr, status: 'paused', error: undefined }
             : { ...full.ocr, status: 'error', error: '原始 PDF 不在本机，请重新导入以继续识别' }
+        }
+        if (current.id !== meta.id) {
+          // 正文换成了另一次识别的结果：本机的笔记按原文重新定位
+          for (const n of await db.listNotes(current.id)) {
+            const hit = findQuote(fresh, n)
+            if (hit) await db.saveNote({ ...n, ...hit })
+          }
         }
         await db.saveBook(full, content)
         extendLoadedBook(current.id, content)
@@ -179,7 +196,8 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const local = remapped.get(bookId)
     if (local) Object.assign(note, relocate(local, note))
     const partial = partialBooks.get(bookId)
-    if (partial) {
+    // 只挪已经识别到的位置上的笔记：没识别到的部分，很短的句子容易在前面碰巧找到一样的
+    if (partial && note.b < partial.blocks.length) {
       const hit = findQuote(partial, note)
       if (hit) Object.assign(note, hit)
     }

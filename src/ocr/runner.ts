@@ -17,7 +17,16 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
-import { continuesAcrossPage, edgeKeys, isPageNumber, joinLines, ocrTextToParagraphs, overlap, stripRunningHeads } from './text'
+import {
+  continuesAcrossPage,
+  edgeKeys,
+  isPageNumber,
+  isPlatePage,
+  joinLines,
+  ocrTextToParagraphs,
+  overlap,
+  stripRunningHeads,
+} from './text'
 
 type Listener = (bookId: string) => void
 
@@ -80,7 +89,7 @@ export function applyOutlineTitles(paragraphs: string[], titles: string[]): stri
 /**
  * 把识别出的一页加到正文末尾。
  * 上一页最后一句话没说完时，和这一页的第一段接成一段（不然朗读会在句子中间停顿）。
- * titles：书签指向这一页的标题，不和上一页接起来；joinable：上一页有文字（空白页、插图页之后不接）。
+ * titles：书签指向这一页的标题，不和上一页接起来；joinable：上一页是正文（空白页、插图页之后不接）。
  */
 export function appendPage(content: BookContent, page: number, paragraphs: string[], titles: string[] = [], joinable = true) {
   content.pages ??= []
@@ -258,7 +267,9 @@ class OcrRunner {
       let ocr: OcrInfo = { ...meta.ocr }
       // 最近 4 页的页首页尾短行（页眉通常单双页交替）
       let edges = Array.isArray(ocr.edges?.[0]) ? ocr.edges.slice(0, 4) : []
-      let prevHadText = true
+      // 上一页是正文才和它接起来（空白页、只有图片说明的插图页不接）
+      const lastStart = content.pages[ocr.done - 1]
+      let prevIsText = !(lastStart != null && lastStart < content.blocks.length && isPlatePage(content.blocks.slice(lastStart)))
       for (let p = ocr.done; p < ocr.pages; p++) {
         if (this.cancelled.has(id)) return
         if (!options.untilText) {
@@ -274,8 +285,9 @@ class OcrRunner {
           .map(t => normalizeText(t))
           .filter(Boolean)
         edges = [edgeKeys(raw), ...edges].slice(0, 4)
-        appendPage(content, p, paragraphs, titles, prevHadText)
-        prevHadText = paragraphs.length > 0
+        const plate = isPlatePage(paragraphs)
+        appendPage(content, p, paragraphs, titles, prevIsText && !plate)
+        prevIsText = paragraphs.length > 0 && !plate
         rebuildOcrContent(content, outline)
 
         const finished = p + 1 >= ocr.pages
