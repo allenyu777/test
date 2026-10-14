@@ -90,6 +90,7 @@ function joinIndentedWrapped(lines: string[]): string[] | null {
 
   const out: string[] = []
   let cur = ''
+  let curIsHead = false
   let prev = ''
   for (const line of lines) {
     if (!line.trim()) {
@@ -99,10 +100,13 @@ function joinIndentedWrapped(lines: string[]): string[] | null {
       continue
     }
     const t = line.trim()
-    const startNew = !cur || indentedRe.test(line) || !isFull(prev) || chapterLevel(t) >= 0 || chapterLevel(cur) >= 0
+    const isHead = chapterLevel(t) >= 0
+    const startNew =
+      !cur || indentedRe.test(line) || !isFull(prev) || isHead || curIsHead || cur.length + t.length > MAX_LINE
     if (startNew) {
       if (cur) out.push(cur)
       cur = t
+      curIsHead = isHead
     } else cur += t
     prev = line
   }

@@ -1,6 +1,6 @@
 // 备份与恢复：书籍、进度、笔记、录音打包成一个 ZIP，可在换手机/换浏览器时迁移
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import type { BookContent } from './core/book'
+import { Book, type BookContent } from './core/book'
 import * as db from './db'
 import type { BookMeta, Note } from './db'
 import { formatDate } from './notes/export'
@@ -39,6 +39,18 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
   return new File([zip as Uint8Array<ArrayBuffer>], `听书备份-${formatDate(Date.now(), false)}.zip`, { type: 'application/zip' })
 }
 
+/** 按笔记引用的原文，在本机这本书里找到对应位置（找不到就保持原位） */
+function relocate(book: Book, note: Note): Pick<Note, 'b' | 'o'> {
+  const needle = note.quote.slice(0, 40)
+  if (!needle) return { b: Math.min(note.b, book.blocks.length - 1), o: 0 }
+  let best: { b: number; o: number } | null = null
+  for (let b = 0; b < book.blocks.length; b++) {
+    const o = book.blocks[b].indexOf(needle)
+    if (o >= 0 && (!best || Math.abs(b - note.b) < Math.abs(best.b - note.b))) best = { b, o }
+  }
+  return best ?? book.clamp({ b: note.b, o: note.o })
+}
+
 export async function restoreBackup(file: File): Promise<{ books: number; notes: number; skipped: number }> {
   const files = unzipSync(new Uint8Array(await file.arrayBuffer()))
   if (!files['backup.json']) throw new Error('这不是听书的备份文件')
@@ -56,16 +68,27 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
   let books = 0
   let skipped = 0
   const progressUpdated: string[] = []
+  // 同一本书重新导入后，段落划分可能不同：按书 id 记下本机的正文，用来换算位置
+  const remapped = new Map<string, Book>()
   for (const meta of manifest.books) {
     const cover = files[`covers/${meta.id}`]
     const contentFile = files[`contents/${meta.id}.json`]
     const current = findLocal(meta)
     if (current) {
       idMap.set(meta.id, current.id)
+      let local: Book | null = null
+      if (current.id !== meta.id) {
+        const content = await db.getContent(current.id)
+        if (content) {
+          local = new Book(content)
+          remapped.set(current.id, local)
+        }
+      }
       // 已有这本书：保留较新的阅读进度
       if ((meta.lastReadAt ?? 0) > (current.lastReadAt ?? 0)) {
+        const pos = local ? local.posAtPercent(meta.percent) : meta.pos
         await db.updateBook(current.id, {
-          pos: meta.pos,
+          pos,
           percent: meta.percent,
           chapter: meta.chapter,
           lastReadAt: meta.lastReadAt,
@@ -95,6 +118,8 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     const bookId = idMap.get(original.bookId)
     if (!bookId) continue
     const note: Note = { ...original, bookId }
+    const local = remapped.get(bookId)
+    if (local) Object.assign(note, relocate(local, note))
     // 本机上更新过的笔记不被旧备份覆盖
     const current = await db.getNote(note.id)
     if (current && current.updatedAt >= note.updatedAt) continue
@@ -106,14 +131,11 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     notes++
   }
   await refreshLibrary()
-  // 正在打开的书如果恢复了更新的进度，让播放器也跳过去
+  // 正在打开的书如果恢复了更新的进度，让播放器也跳过去（不再重新保存）
   const loaded = player.meta
   if (loaded && progressUpdated.includes(loaded.id) && player.state.status !== 'playing') {
     const fresh = await db.getBook(loaded.id)
-    if (fresh) {
-      Object.assign(loaded, fresh)
-      player.seek(fresh.pos, false)
-    }
+    if (fresh) player.reloadMeta(fresh)
   }
   return { books, notes, skipped }
 }

@@ -228,7 +228,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
 
   // 调整字号/行距/字体后，重新把朗读位置放回视野
   useLayoutEffect(() => {
-    applyHighlight(followingRef.current ? 'center' : 'none')
+    applyHighlight(followingRef.current && player.state.status === 'playing' ? 'center' : 'none')
     updateLocate()
   }, [fontSize, lineHeight, font])
 

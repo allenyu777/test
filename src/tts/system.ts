@@ -71,7 +71,11 @@ export class SystemEngine implements Engine {
       this.callbacks?.onSentence(segment.sentences[0].pos)
       this.armWatchdog(gen, segment)
     }
-    u.onend = () => this.advance(gen, item)
+    u.onend = () => {
+      // 读完一句就清零（有的浏览器不触发 onstart）
+      if (gen === this.gen) this.failures = 0
+      this.advance(gen, item)
+    }
     u.onerror = event => {
       if (gen !== this.gen) return
       const error = (event as SpeechSynthesisErrorEvent).error
