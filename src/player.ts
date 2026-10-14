@@ -36,11 +36,20 @@ export interface PlayerState {
 
 const END_PUNCT = /[。！？.!?；;…：:”"」』）)]$/
 
+export interface BookSource extends SegmentSource {
+  /** 最后交给引擎的一句及当时的长度（扫描版的下一页可能把这句话补完整） */
+  readonly last: { pos: Pos; len: number } | null
+}
+
 /** 从某个位置开始，按引擎需要的长度切出朗读片段 */
-export function createSource(book: Book, from: Pos, maxChars: number, stopAt: () => number | null): SegmentSource {
+export function createSource(book: Book, from: Pos, maxChars: number, stopAt: () => number | null): BookSource {
   let pos: Pos | null = book.speakableFrom(from)
   let first = true
+  let last: BookSource['last'] = null
   return {
+    get last() {
+      return last
+    },
     next(): Segment | null {
       const limitBlock = stopAt()
       if (!pos || (limitBlock != null && pos.b >= limitBlock)) return null
@@ -49,8 +58,11 @@ export function createSource(book: Book, from: Pos, maxChars: number, stopAt: ()
       let prevBlock = -1
       const limit = maxChars <= 0 ? 0 : first ? Math.min(maxChars, 60) : maxChars
       while (pos && (limitBlock == null || pos.b < limitBlock)) {
-        const t = speechText(book.sentenceText(pos))
+        const raw = book.sentenceText(pos)
+        const t = speechText(raw)
         if (sentences.length && (limit === 0 || text.length + t.length > limit)) break
+        // 读不出来而跳过的句子（例如只有网址）也记下，续读时从它后面接着
+        last = { pos, len: raw.length }
         if (t && isSpeakable(t)) {
           if (prevBlock >= 0 && pos.b !== prevBlock) {
             // 段落之间补一个停顿
@@ -88,7 +100,10 @@ class Player {
   private cloudEngines = new Map<string, CloudEngine>()
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private sleepTimer: ReturnType<typeof setTimeout> | null = null
-  private stopAt: number | null = null
+  /** "读完本章"定时：记下所在章节的某一段，章节的结尾随目录更新实时计算 */
+  private chapterTimer: number | null = null
+  /** 当前这次朗读的片段来源 */
+  private source: BookSource | null = null
   /** 读到已识别内容的末尾，正在等待后面的页面 */
   private waitingOcr = false
   private saveWarned = false
@@ -119,6 +134,8 @@ class Player {
       this.saveNow()
     }
     this.clearSleep()
+    this.waitingOcr = false
+    this.source = null
     this.meta = meta
     this.book = book
     const pos = book.clamp(meta.pos)
@@ -131,10 +148,13 @@ class Player {
       pos,
       rate,
       voice: resolveVoice(meta.voice, meta.lang, s),
-      percent: meta.finished ? 100 : book.percent(pos),
+      percent: meta.finished ? 100 : this.percentOf(pos),
       chapter: book.chapterTitle(pos.b),
     })
     this.updateMetadata()
+    // 正在听的书优先识别
+    const ocr = this.liveOcr()
+    if (ocr && ocr.status !== 'done') ocrRunner.prioritize(meta.id)
   }
 
   /** 外部（如恢复备份）更新了这本书的进度：同步到播放器，不触发保存 */
@@ -146,7 +166,7 @@ class Player {
     const pos = this.book.clamp(fresh.pos)
     this.store.set({
       pos,
-      percent: fresh.finished ? 100 : this.book.percent(pos),
+      percent: fresh.finished ? 100 : this.percentOf(pos),
       chapter: this.book.chapterTitle(pos.b),
     })
     this.updateMetadata()
@@ -282,7 +302,7 @@ class Player {
       this.store.set({ sleep: { mode, minutes, endsAt } })
       this.sleepTimer = setTimeout(() => this.sleepNow(), minutes * 60000)
     } else if (mode === 'chapter' && this.book) {
-      this.stopAt = this.book.chapterRange(this.state.pos.b).end
+      this.chapterTimer = this.state.pos.b
       this.store.set({ sleep: { mode } })
     } else this.store.set({ sleep: { mode: 'off' } })
   }
@@ -290,8 +310,21 @@ class Player {
   private clearSleep() {
     if (this.sleepTimer) clearTimeout(this.sleepTimer)
     this.sleepTimer = null
-    this.stopAt = null
+    this.chapterTimer = null
     this.store.set({ sleep: { mode: 'off' } })
+  }
+
+  /**
+   * "读完本章"在哪一段停下。
+   * 扫描版的这一章还没识别完（章节结尾就是已识别内容的末尾）时还不知道，返回 null。
+   */
+  private stopBlock(): number | null {
+    const book = this.book
+    if (this.chapterTimer == null || !book) return null
+    const { end } = book.chapterRange(Math.min(this.chapterTimer, book.blocks.length - 1))
+    const ocr = this.liveOcr()
+    if (end >= book.blocks.length && ocr && ocr.status !== 'done') return null
+    return end
   }
 
   private sleepNow() {
@@ -344,8 +377,9 @@ class Player {
     if (this.engine && this.engine !== engine) this.engine.stop()
     this.engine = engine
     // "读完本章"始终指向开始朗读位置所在的章节（往前或往后跳章都会重新计算）
-    if (this.stopAt != null) this.stopAt = book.chapterRange(start.b).end
-    const source = createSource(book, start, engine.maxChars, () => this.stopAt)
+    if (this.chapterTimer != null) this.chapterTimer = start.b
+    const source = createSource(book, start, engine.maxChars, () => this.stopBlock())
+    this.source = source
     const voice = this.state.voice
     const callbacks: EngineCallbacks = {
       onSentence: pos => this.onSentence(engine, pos),
@@ -366,6 +400,8 @@ class Player {
     }
     this.setPos(start)
     this.setStatus('playing')
+    // 等待识别时显示的加载状态，换成引擎自己的
+    this.store.set({ loading: false })
     engine.start(source, { voiceId: voice.id, lang: voice.lang || meta.lang, rate: this.state.rate }, callbacks)
     if (!meta.lastReadAt || Date.now() - meta.lastReadAt > 60000) this.saveNow()
   }
@@ -377,7 +413,8 @@ class Player {
 
   private onSentence(engine: Engine, pos: Pos) {
     if (this.engine !== engine) return
-    if (this.stopAt != null && pos.b >= this.stopAt) {
+    const stop = this.stopBlock()
+    if (stop != null && pos.b >= stop) {
       this.sleepNow()
       return
     }
@@ -390,6 +427,18 @@ class Player {
     this.scheduleSave()
   }
 
+  /**
+   * 这次朗读结束后接着读的位置（引擎只报告每个片段的第一句，所以以交给引擎的最后一句为准）。
+   * 扫描版的下一页可能把最后一句话补完整（跨页的句子），这时从这句话开头重读。
+   */
+  private continuePos(): Pos | null {
+    const book = this.book
+    const last = this.source?.last
+    if (!book || !last) return null
+    if (book.sentenceText(last.pos).length > last.len) return last.pos
+    return book.next(last.pos)
+  }
+
   /** 扫描版正在识别的书，最新的识别状态 */
   private liveOcr() {
     const id = this.meta?.id
@@ -398,11 +447,20 @@ class Player {
 
   private onFinished(engine: Engine) {
     if (this.engine !== engine) return
-    if (this.stopAt != null) {
-      this.clearSleep()
-      this.setStatus('paused')
-      toast('本章已读完，定时关闭')
-      this.saveNow()
+    // 朗读期间可能又识别出了新的页面
+    const next = this.continuePos()
+    if (this.chapterTimer != null) {
+      const stop = this.stopBlock()
+      if (stop != null && (!next || next.b >= stop)) {
+        this.clearSleep()
+        this.setStatus('paused')
+        toast('本章已读完，定时关闭')
+        this.saveNow()
+        return
+      }
+    }
+    if (next) {
+      this.startEngine(next)
       return
     }
     // 扫描版还没识别完：等后面的页面识别出来再接着读
@@ -412,6 +470,7 @@ class Player {
       if (ocr.status === 'running') {
         this.waitingOcr = true
         this.store.set({ loading: true })
+        if (this.meta) ocrRunner.prioritize(this.meta.id)
         toast('后面的页面还在识别，识别好后会自动接着读')
       } else {
         this.setStatus('paused')
@@ -422,19 +481,29 @@ class Player {
     this.finishBook()
   }
 
-  /** 识别出新页面：如果正在等待，就从新内容接着读 */
+  /** 识别出新页面：更新进度显示；如果正在等待，就从新内容接着读 */
   private onBookExtended(id: string) {
     if (!this.meta || this.meta.id !== id || !this.book) return
     const ocr = this.liveOcr()
     this.meta.ocr = ocr
+    // 总页数里识别好的比例变了，进度百分比和章节名跟着更新
+    if (!this.meta.finished) this.setPos(this.state.pos)
     if (!this.waitingOcr) return
     if (this.state.status !== 'playing') {
       this.waitingOcr = false
       return
     }
-    const next = this.book.next(this.state.pos)
+    const next = this.continuePos()
     if (next) {
       this.waitingOcr = false
+      const stop = this.stopBlock()
+      if (stop != null && next.b >= stop) {
+        this.clearSleep()
+        this.setStatus('paused')
+        toast('本章已读完，定时关闭')
+        this.saveNow()
+        return
+      }
       this.startEngine(next)
     } else if (!ocr || ocr.status === 'done') {
       this.waitingOcr = false
@@ -464,8 +533,18 @@ class Player {
     if (!book) return
     const chapter = book.chapterTitle(pos.b)
     const changedChapter = chapter !== this.state.chapter
-    this.store.set({ pos, percent: book.percent(pos), chapter })
+    this.store.set({ pos, percent: this.percentOf(pos), chapter })
     if (changedChapter) this.updateMetadata()
+  }
+
+  /** 进度百分比；扫描版还没识别完时按已识别页数占总页数的比例折算 */
+  private percentOf(pos: Pos): number {
+    const book = this.book
+    if (!book) return 0
+    const percent = book.percent(pos)
+    const ocr = this.liveOcr()
+    if (!ocr || ocr.status === 'done' || !ocr.pages) return percent
+    return (percent * Math.min(ocr.done, ocr.pages)) / ocr.pages
   }
 
   private setStatus(status: PlayStatus) {

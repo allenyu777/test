@@ -72,6 +72,32 @@ const median = (values: number[]) => {
 
 const normalizeRepeat = (s: string) => s.replace(/\d+/g, '#').replace(/\s+/g, '')
 
+/** 页面顶部、底部各两行（页眉、页脚、水印所在的位置） */
+function edgeLines<T>(lines: T[]): T[] {
+  return lines.length <= 4 ? lines : [...lines.slice(0, 2), ...lines.slice(-2)]
+}
+
+/**
+ * 在很多页的顶部或底部重复出现的短行（页眉、水印、"扫描全能王"之类的标记）。
+ * 乱码行不算，留给乱码检测。
+ */
+export function repeatedLineKeys(pages: { text: string }[][], minShare = 0.5): Set<string> {
+  const counts = new Map<string, number>()
+  for (const lines of pages) {
+    const keys = new Set(edgeLines(lines).filter(l => l.text.length <= 60 && garbleRatio(l.text) < 0.15).map(l => normalizeRepeat(l.text)))
+    for (const key of keys) if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const threshold = Math.max(3, pages.length * minShare)
+  return new Set([...counts].filter(([, n]) => n >= threshold).map(([k]) => k))
+}
+
+/** 去掉页面顶部、底部重复出现的行 */
+export function dropRepeatedLines<T extends { text: string }>(lines: T[], repeated: Set<string> | undefined): T[] {
+  if (!repeated?.size) return lines
+  const edge = new Set(edgeLines(lines))
+  return lines.filter(l => !(edge.has(l) && repeated.has(normalizeRepeat(l.text))))
+}
+
 /** 去掉每页重复出现的页眉页脚和页码 */
 export function stripHeadersFooters(pages: Line[][]): Line[][] {
   // 页数太少时无法判断哪些是重复的页眉页脚
@@ -163,15 +189,18 @@ export class ScannedPdfError extends Error {
   }
 }
 
-type PdfDocument = Awaited<ReturnType<typeof import('pdfjs-dist/legacy/build/pdf.mjs')['getDocument']>['promise']>
+export type PdfDocument = Awaited<ReturnType<typeof import('pdfjs-dist/legacy/build/pdf.mjs')['getDocument']>['promise']>
 
-/** 打开 PDF（会复制一份数据，pdf.js 会把传入的数据转交给后台线程） */
-export async function openPdf(data: ArrayBuffer | Uint8Array): Promise<PdfDocument> {
+/**
+ * 打开 PDF。pdf.js 会把传入的数据转交给后台线程，默认先复制一份；
+ * 数据只用这一次时传 copy: false，避免大文件占两份内存。
+ */
+export async function openPdf(data: ArrayBuffer | Uint8Array, { copy = true } = {}): Promise<PdfDocument> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const workerUrl = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
   const cMapUrl = import.meta.env.DEV ? '/node_modules/pdfjs-dist/cmaps/' : new URL('pdfjs/cmaps/', document.baseURI).href
-  const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0))
+  const bytes = data instanceof Uint8Array ? (copy ? data.slice() : data) : new Uint8Array(copy ? data.slice(0) : data)
   return pdfjs.getDocument({
     data: bytes,
     cMapUrl,
@@ -198,13 +227,34 @@ async function pdfInfo(pdf: PdfDocument, fileName: string) {
   return { title, author: author || fromName.author }
 }
 
-/** 读取某一页的文字层（页码从 0 开始），按段落返回 */
-export async function pageParagraphs(pdf: PdfDocument, index: number): Promise<string[]> {
+/** 读取某一页的文字行（页码从 0 开始） */
+export async function pageLines(pdf: PdfDocument, index: number): Promise<Line[]> {
+  const page = await pdf.getPage(index + 1)
+  try {
+    const content = await page.getTextContent()
+    return groupLines(content.items as TextItemLike[])
+  } finally {
+    page.cleanup()
+  }
+}
+
+/** 抽样找出各页重复的文字行（水印、页眉），识别时忽略 */
+export async function sampleRepeatedLines(pdf: PdfDocument): Promise<Set<string>> {
+  const n = pdf.numPages
+  const step = Math.max(1, Math.floor(n / 30))
+  const pages: Line[][] = []
+  for (let i = 0; i < n; i += step) pages.push(await pageLines(pdf, i))
+  return repeatedLineKeys(pages)
+}
+
+/** 读取某一页的文字层（页码从 0 开始），按段落返回；页面首尾属于 ignore 的重复行会被去掉 */
+export async function pageParagraphs(pdf: PdfDocument, index: number, ignore?: Set<string>): Promise<string[]> {
   const page = await pdf.getPage(index + 1)
   try {
     const content = await page.getTextContent()
     const builder = new BookBuilder()
-    linesToParagraphs(stripHeadersFooters([groupLines(content.items as TextItemLike[])]), builder)
+    const lines = dropRepeatedLines(groupLines(content.items as TextItemLike[]), ignore)
+    linesToParagraphs(stripHeadersFooters([lines]), builder)
     return builder.blocks
   } finally {
     page.cleanup()
@@ -279,7 +329,9 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
       page.cleanup()
       if (i % 5 === 0) onProgress?.(i / pdf.numPages, `正在提取文字 ${i}/${pdf.numPages} 页`)
     }
-    const pageText = pages.map(lines => lines.map(l => l.text).join('\n'))
+    // 每页都有的水印、页眉不算正文（扫描版常带"扫描全能王"之类的文字标记）
+    const repeated = repeatedLineKeys(pages)
+    const pageText = pages.map(lines => dropRepeatedLines(lines, repeated).map(l => l.text).join('\n'))
     const garbled = pageText.map(t => isGarbled(t))
     const garbledPages = garbled.filter(Boolean).length
     const goodText = pageText.filter((_, i) => !garbled[i])

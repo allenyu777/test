@@ -1,6 +1,8 @@
 /* 由 vite.config.ts 在构建时生成 sw.js，请勿直接修改生成结果 */
 const VERSION = '__VERSION__'
 const CACHE = 'tingshu-' + VERSION
+// 按需下载的大文件（PDF 字形表、文字识别引擎）单独缓存：应用更新时只要这些文件没变就不用重新下载
+const ASSET_CACHE = 'tingshu-assets-' + '__ASSET_VERSION__'
 const ASSETS = __ASSETS__
 
 self.addEventListener('install', event => {
@@ -13,7 +15,7 @@ self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys()
     await Promise.all(keys
-      .filter(key => key.startsWith('tingshu-') && key !== CACHE)
+      .filter(key => key.startsWith('tingshu-') && key !== CACHE && key !== ASSET_CACHE)
       .map(key => caches.delete(key)))
     await self.clients.claim()
   })())
@@ -39,7 +41,7 @@ self.addEventListener('fetch', event => {
     caches.match(request, { ignoreSearch: true }).then(cached => cached || fetch(request).then(response => {
       if (response.ok && /\/(pdfjs|tesseract)\//.test(url.pathname)) {
         const copy = response.clone()
-        caches.open(CACHE).then(cache => cache.put(request, copy))
+        caches.open(ASSET_CACHE).then(cache => cache.put(request, copy))
       }
       return response
     })))
