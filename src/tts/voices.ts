@@ -143,7 +143,9 @@ export function autoVoiceOptions(lang?: string): VoiceOption[] {
   for (const v of systemVoices()) {
     if (baseLang(v.lang) === base || (base === 'zh' && /^yue/i.test(v.lang))) locales.add(v.lang.replace('_', '-'))
   }
-  const main = MAIN_LOCALE[base] ?? base
+  // 没有预设的语言：用设备上有的地区（ru-RU、it-IT…），都没有才用语言代码本身
+  const regional = [...locales].sort()
+  const main = MAIN_LOCALE[base] ?? regional.find(l => l.toLowerCase() === `${base}-${base}`) ?? regional[0] ?? base
   locales.add(main)
   return [...locales]
     .sort((a, b) => Number(b === main) - Number(a === main) || a.localeCompare(b))

@@ -33,6 +33,8 @@ export interface ChapterMark {
   o: number
   /** 记下的时间 */
   t: number
+  /** 从这个时间起暂时保留这个位置（位置往回移动时，见 Player.rememberChapter） */
+  h?: number
 }
 
 export type OcrEngine = 'local' | 'cloud'

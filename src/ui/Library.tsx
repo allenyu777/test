@@ -529,8 +529,11 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
             class="option"
             onClick={async () => {
               if (!confirm('把阅读进度重置到开头？')) return
-              if (player.state.bookId === meta.id) player.seek({ b: 0, o: 0 }, false)
-              await updateBookMeta(meta.id, { pos: { b: 0, o: 0 }, percent: 0, finished: false, lastReadAt: 0 })
+              if (player.state.bookId === meta.id) {
+                player.clearChapterMarks(meta.id)
+                player.seek({ b: 0, o: 0 }, false)
+              }
+              await updateBookMeta(meta.id, { pos: { b: 0, o: 0 }, percent: 0, finished: false, lastReadAt: 0, chapterPos: {} })
               onClose()
             }}
           >

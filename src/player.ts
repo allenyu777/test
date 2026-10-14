@@ -34,6 +34,9 @@ export interface PlayerState {
   chapter: string
 }
 
+// 在一章里往回移动后，原来读到的位置先保留这么久：点错了马上点回来，还能接着原来的地方读
+const HOLD_MS = 90_000
+
 const END_PUNCT = /[。！？.!?；;…：:”"」』）)]$/
 
 export interface BookSource extends SegmentSource {
@@ -257,9 +260,11 @@ class Player {
       toast('已经是最后一章')
       return
     }
-    // 回到本章开头就从头读；换到别的章节时，读过一部分的接着上次的位置读
+    // 回到本章开头就从头读（可以一键回到刚才的位置）；换到别的章节时，读过一部分的接着上次的位置读
     if (target === book.chapterRange(pos.b).start) {
+      const back = this.chapterResume(target)
       this.seek(book.speakableFrom({ b: target, o: 0 }) ?? { b: target, o: 0 })
+      if (back) toast('从本章开头读', 'info', { duration: 5000, action: { label: '回到刚才的位置', run: () => this.seek(back) } })
       return
     }
     const { pos: p, resumed, start } = this.chapterTarget(target)
@@ -273,10 +278,7 @@ class Player {
     const marks = this.meta?.chapterPos
     if (!book || !marks || !book.blocks.length) return null
     const range = book.chapterRange(Math.min(b, book.blocks.length - 1))
-    let best: ChapterMark | null = null
-    for (const m of Object.values(marks)) {
-      if (m.b >= range.start && m.b < range.end && (!best || m.t > best.t)) best = m
-    }
+    const best = this.chapterMark(range)?.[1]
     if (!best) return null
     const pos = book.clamp(best)
     if (book.charsBetween(range.start, pos.b) + pos.o < 30) return null
@@ -311,14 +313,47 @@ class Player {
     })
   }
 
-  /** 记下当前位置所在章节读到哪里 */
+  /** 某一章范围内记下的位置（扫描版目录重建后可能留在旧的键下，取最新的） */
+  private chapterMark(range: { start: number; end: number }): [string, ChapterMark] | null {
+    let best: [string, ChapterMark] | null = null
+    for (const [key, m] of Object.entries(this.meta?.chapterPos ?? {})) {
+      if (m.b >= range.start && m.b < range.end && (!best || m.t > best[1].t)) best = [key, m]
+    }
+    return best
+  }
+
+  /**
+   * 记下当前位置所在章节读到哪里（每章只留一个位置）。
+   * 位置往回移动时（点错章节后连续读进了这一章、"上一章"回到本章开头等），原来读到的位置先保留一会儿，
+   * 这期间点回这一章还能接着原来的地方读；真的往回重听，过一会儿位置就跟上来了。
+   */
   private rememberChapter(pos: Pos, at = Date.now()) {
     const book = this.book
     const meta = this.meta
     if (!book || !meta || !book.blocks.length) return
-    const { start } = book.chapterRange(Math.min(pos.b, book.blocks.length - 1))
-    meta.chapterPos ??= {}
-    meta.chapterPos[start] = { b: pos.b, o: pos.o, t: at }
+    const range = book.chapterRange(Math.min(pos.b, book.blocks.length - 1))
+    const marks = (meta.chapterPos ??= {})
+    const found = this.chapterMark(range)
+    for (const [key, m] of Object.entries(marks)) {
+      if (m.b >= range.start && m.b < range.end && key !== String(range.start)) delete marks[key]
+    }
+    const mark = found?.[1]
+    if (mark && book.charOffset(pos) < book.charOffset(book.clamp(mark))) {
+      if (mark.h == null) {
+        marks[range.start] = { ...mark, h: at }
+        return
+      }
+      if (at - mark.h < HOLD_MS) {
+        marks[range.start] = mark
+        return
+      }
+    }
+    marks[range.start] = { b: pos.b, o: pos.o, t: at }
+  }
+
+  /** 清除各章节记下的位置（"从头开始"时） */
+  clearChapterMarks(bookId: string) {
+    if (this.meta?.id === bookId) this.meta.chapterPos = {}
   }
 
   setRate(rate: number) {
@@ -483,7 +518,9 @@ class Player {
     const book = this.book
     if (book && this.meta?.chapterPos) {
       const prev = book.chapterRange(this.state.pos.b)
-      if (pos.b >= prev.end && book.chapterRange(pos.b).start === prev.end) delete this.meta.chapterPos[prev.start]
+      if (pos.b >= prev.end && book.chapterRange(pos.b).start === prev.end) {
+        for (const [key, m] of Object.entries(this.meta.chapterPos)) if (m.b >= prev.start && m.b < prev.end) delete this.meta.chapterPos[key]
+      }
     }
     const sleep = this.state.sleep
     if (sleep.mode === 'minutes' && sleep.endsAt && Date.now() >= sleep.endsAt) {

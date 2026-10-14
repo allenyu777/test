@@ -9,6 +9,7 @@ const VOICES = [
   { name: 'Meijia', lang: 'zh-TW', voiceURI: 'com.apple.voice.compact.zh-TW.Meijia', localService: true, default: true },
   { name: 'Sinji', lang: 'zh-HK', voiceURI: 'com.apple.voice.compact.zh-HK.Sinji', localService: true, default: true },
   { name: 'Samantha', lang: 'en-US', voiceURI: 'com.apple.voice.compact.en-US.Samantha', localService: true, default: true },
+  { name: 'Milena', lang: 'ru-RU', voiceURI: 'com.apple.voice.compact.ru-RU.Milena', localService: true, default: true },
 ]
 const spoken: { text: string; lang: string; voice: unknown }[] = []
 const g = globalThis as any
@@ -44,6 +45,9 @@ describe('follow-system voice', () => {
   it('offers one option per locale of the book language, main locale first', () => {
     expect(autoVoiceOptions('zh').map(v => v.id)).toEqual(['auto:zh-CN', 'auto:zh-HK', 'auto:zh-TW'])
     expect(autoVoiceOptions('en').map(v => v.lang)).toEqual(['en-US'])
+    // 没有预设地区的语言用设备上有的地区，不出现只有语言代码的重复选项
+    expect(autoVoiceOptions('ru').map(v => v.lang)).toEqual(['ru-RU'])
+    expect(autoVoiceOptions('it').map(v => v.lang)).toEqual(['it'])
     expect(systemVoiceOptions('zh')).toHaveLength(3)
   })
   it('is kept as the chosen voice and never matched to a listed voice', () => {
