@@ -72,6 +72,9 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
           aria-label="本章进度"
           onInput={e => setDrag(Number((e.target as HTMLInputElement).value))}
           onChange={e => seekTo(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={() => setTimeout(() => setDrag(null), 0)}
+          onPointerUp={() => setTimeout(() => setDrag(null), 0)}
+          onBlur={() => setDrag(null)}
         />
         <div class="player-controls">
           <button class="icon-btn" onClick={() => player.skipChapter(-1)} aria-label="上一章">

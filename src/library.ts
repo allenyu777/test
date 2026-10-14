@@ -80,7 +80,8 @@ export async function importFiles(files: File[]): Promise<BookMeta[]> {
       // 声明的语言为空、"und"，或与正文明显不符（如中文书标成 en）时，以正文识别为准
       const detected = detectLang(content.blocks.slice(0, 200).join('\n'))
       let lang = baseLang(parsed.lang)
-      if (!lang || ['und', 'mul', 'zxx', 'mis'].includes(lang) || (['zh', 'ja', 'ko'].includes(detected) && lang !== detected)) {
+      const cjk = ['zh', 'ja', 'ko']
+      if (!lang || ['und', 'mul', 'zxx', 'mis'].includes(lang) || (cjk.includes(detected) && !cjk.includes(lang))) {
         lang = detected
       }
       const book = new Book(content)

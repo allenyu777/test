@@ -66,13 +66,23 @@ export class Recorder {
     if (!recorder) return Promise.reject(new Error('没有在录音'))
     const duration = this.elapsed
     return new Promise(resolve => {
-      recorder.onstop = () => {
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
         const type = recorder.mimeType || this.chunks[0]?.type || 'audio/mp4'
         const blob = new Blob(this.chunks, { type })
         this.cleanup()
         resolve({ blob, type, duration })
       }
+      // 录音可能已经被系统中断（来电、音频被占用），此时不会再有 stop 事件
+      if (recorder.state === 'inactive') {
+        finish()
+        return
+      }
+      recorder.onstop = finish
       recorder.stop()
+      setTimeout(finish, 3000)
     })
   }
 

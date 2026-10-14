@@ -44,6 +44,8 @@ export function AudioChip({ audioId, blob, duration }: { audioId?: string; blob?
     if (!source) {
       // 录音要先从数据库读出来；iOS 要求 play() 在点击中调用，所以先用静音解锁
       silentUrl ??= URL.createObjectURL(makeWav(0.2))
+      noteAudioOwner?.(false)
+      noteAudioOwner = null
       a.onended = a.onpause = a.onplay = null
       a.src = silentUrl
       a.play().catch(() => {})

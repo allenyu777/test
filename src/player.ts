@@ -133,6 +133,21 @@ class Player {
     this.updateMetadata()
   }
 
+  /** 外部（如恢复备份）更新了这本书的进度：同步到播放器，不触发保存 */
+  reloadMeta(fresh: BookMeta) {
+    if (!this.meta || !this.book || this.meta.id !== fresh.id) return
+    if (this.engine?.isActive()) this.engine.stop()
+    if (this.state.status === 'playing') this.setStatus('paused')
+    Object.assign(this.meta, fresh)
+    const pos = this.book.clamp(fresh.pos)
+    this.store.set({
+      pos,
+      percent: fresh.finished ? 100 : this.book.percent(pos),
+      chapter: this.book.chapterTitle(pos.b),
+    })
+    this.updateMetadata()
+  }
+
   /** 卸下当前的书（例如书被删除时） */
   close() {
     this.engine?.stop()
