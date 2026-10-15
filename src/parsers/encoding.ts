@@ -23,7 +23,7 @@ function score(text: string): number {
   return s
 }
 
-function looksUtf16(bytes: Uint8Array): 'utf-16le' | 'utf-16be' | null {
+export function looksUtf16(bytes: Uint8Array): 'utf-16le' | 'utf-16be' | null {
   const n = Math.min(bytes.length, 4096) & ~1
   if (n < 8) return null
   let evenZero = 0

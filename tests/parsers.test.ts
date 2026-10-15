@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { Book, finalizeBook } from '../src/core/book'
 import { decodeText } from '../src/parsers/encoding'
-import { parseFile } from '../src/parsers'
+import { mobiEncryption, parseFile, sniffFormat } from '../src/parsers'
 import { groupLines, linesToParagraphs, stripHeadersFooters } from '../src/parsers/pdf'
 import { BookBuilder } from '../src/core/book'
 import { titleFromFileName } from '../src/parsers/txt'
@@ -267,5 +267,35 @@ describe('Book navigation', () => {
     expect(book.sentenceText(book.prev(pos)!)).toBe('第二句！')
     expect(book.percent({ b: 2, o: 0 })).toBeCloseTo((8 + 5) / 17 * 100, 1)
     expect(book.posAtPercent(80)).toEqual({ b: 2, o: 0 })
+  })
+})
+
+describe('choosing any file on iPhone', () => {
+  it('refuses photos, audio and other binary files instead of reading them as text', () => {
+    // 照片开头：JPEG 标记加上 EXIF 数据（里面有很多 0 字节）
+    const jpeg = new Uint8Array(512)
+    jpeg.set([0xff, 0xd8, 0xff, 0xe1, 0x01, 0xfe, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0x4d, 0x4d, 0x00, 0x2a])
+    for (let i = 16; i < 512; i++) jpeg[i] = (i * 37) % 7 === 0 ? 0 : (i * 91) % 251
+    expect(sniffFormat(jpeg, 'IMG_0001.JPG')).toBe('unsupported')
+    expect(sniffFormat(jpeg, 'something')).toBe('unsupported')
+    expect(sniffFormat(new TextEncoder().encode('{\\rtf1 hello}'), 'notes.rtf')).toBe('unsupported')
+  })
+  it('still reads text, UTF-16 text and books', () => {
+    expect(sniffFormat(new TextEncoder().encode('第一章 开始\n正文。'), 'book')).toBe('txt')
+    const utf16 = new Uint8Array([...'Chapter One. It was a dark and stormy night.'].flatMap(c => [c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8]))
+    expect(sniffFormat(utf16, 'book.dat')).toBe('txt')
+    // 扩展名是 .txt 的总是按文本读（中文 UTF-16）
+    const zh = new Uint8Array([0xff, 0xfe, ...[...'第一章 开始，正文。'].flatMap(c => [c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8])])
+    expect(sniffFormat(zh, 'book.txt')).toBe('txt')
+    const mobi = makeMobi({ title: 'T', author: 'A', html: '<p>Hello.</p>' })
+    expect(sniffFormat(mobi, 'x.azw3')).toBe('mobi')
+  })
+  it('detects DRM-encrypted MOBI files', () => {
+    const mobi = makeMobi({ title: 'T', author: 'A', html: '<p>Hello.</p>' })
+    expect(mobiEncryption(mobi)).toBe(0)
+    const locked = mobi.slice()
+    const record0 = new DataView(locked.buffer).getUint32(78)
+    new DataView(locked.buffer).setUint16(record0 + 12, 2)
+    expect(mobiEncryption(locked)).toBe(2)
   })
 })

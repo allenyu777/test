@@ -5,6 +5,7 @@ import * as db from '../db'
 import { importFiles, library, loadBook, removeBook, updateBookMeta } from '../library'
 import { buildNotesFile } from '../notes/export'
 import { ACCEPT, FORMAT_LABELS } from '../parsers'
+import { isIOS } from '../tts/voices'
 import { createScannedBook, type ScanChoice } from '../ocr/importScanned'
 import type { ScannedPdfError } from '../parsers/pdf'
 import { ocrRunner } from '../ocr/runner'
@@ -184,7 +185,9 @@ export function Library() {
       <input
         ref={fileRef}
         type="file"
-        accept={ACCEPT}
+        // iPhone 只认识自己登记过的文件类型（EPUB、PDF、TXT 等），按扩展名过滤会把 MOBI、AZW3、FB2 显示成灰色选不了；
+        // 所以在 iPhone 上不过滤，选好以后由应用判断格式
+        accept={isIOS() ? undefined : ACCEPT}
         multiple
         class="sr-only"
         onChange={e => onFiles((e.target as HTMLInputElement).files)}
