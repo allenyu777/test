@@ -1,5 +1,7 @@
 # 听书 · 电子书朗读
 
+[English](#english) · 中文
+
 一个给自己用的「听电子书」网页应用（PWA）。在 iPhone 的 Safari 里打开后「添加到主屏幕」，就能像 App 一样全屏使用，不需要上架 App Store。
 
 ## 功能
@@ -91,3 +93,48 @@ npm run build    # 生产构建，输出到 dist/
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)（Apache-2.0）的 PP-OCR 模型、[ppu-paddle-ocr](https://github.com/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr)（MIT）、[ONNX Runtime Web](https://github.com/microsoft/onnxruntime)（MIT）：扫描版 PDF 的本机文字识别
 - [Tesseract.js](https://github.com/naptha/tesseract.js)（Apache-2.0）：不支持 PaddleOCR 的设备上的备用识别引擎
 - [fflate](https://github.com/101arrowz/fflate)（MIT）、[idb](https://github.com/jakearchibald/idb)（ISC）、[Preact](https://preactjs.com)（MIT）
+
+---
+
+## English
+
+**Tingshu (听书, "listen to books")** is an ebook reader that reads your books aloud: a text-to-speech audiobook player built as a progressive web app (PWA) for iPhone. Open it in Safari and choose "Add to Home Screen" to use it full-screen like a native app, with no App Store needed. The interface is in Chinese; books can be in Chinese, English or other languages.
+
+### Features
+
+- **Many formats**: EPUB, MOBI, AZW3, PDF, TXT (UTF-8 / GBK / Big5 detected automatically), FB2, DOCX, HTML, Markdown
+- **Scanned and garbled PDFs**: on-device OCR with PaddleOCR models (simplified and traditional Chinese, English); a one-time download of about 33 MB, then works offline and uploads nothing. Falls back to Tesseract on devices that can't run it (before iOS 16.4). Running headers and page numbers are removed by their position on the page, two-column pages are read column by column, and sentences split across pages are joined. Pages are recognized in the background, so you can start listening after the first few. Optional cloud OCR through any OpenAI-compatible vision model
+- **Voices**
+  - System voices: free and offline. iOS only exposes its built-in voices to web pages; an experimental "follow iPhone settings" option may use a downloaded higher-quality voice on some iOS versions
+  - Azure neural voices (recommended): very natural, 500,000 free characters per month, keeps playing on the lock screen
+  - Any OpenAI-compatible `/v1/audio/speech` service (e.g. gpt-4o-mini-tts)
+- **Speed** from 0.5× to 3×; speed and voice are remembered per book
+- **Progress per book and per chapter**: each book keeps its own position; each chapter remembers where you stopped, so jumping to the wrong chapter and back resumes where you were
+- **Follow along**: the sentence being read is highlighted and the page scrolls with it; one tap jumps back to the reading position
+- **Notes**: text or voice notes on any sentence, optional speech-to-text; export as Markdown, plain text, or a ZIP with recordings
+- **Also**: table of contents, sleep timer (minutes or end of chapter), lock-screen controls, light / sepia / green / dark themes, font settings, full backup and restore, offline use
+
+### Privacy
+
+Books, progress, notes and recordings stay on your device. Azure / OpenAI keys are stored only on the device, sent only to the service you configured, and never included in backups or in this repository.
+
+### Install on iPhone
+
+1. Open the deployed site in **Safari**
+2. Tap Share → **Add to Home Screen**
+3. Always open it from the home-screen icon (home-screen apps keep their own data, separate from Safari)
+
+### Deploy your own copy
+
+Fork the repository, then in **Settings → Pages** set **Source** to **GitHub Actions**. Every push to `main` builds and publishes the site to `https://<user>.github.io/<repo>/`. Any static host works too: build with `npm run build` and publish `dist/`.
+
+### Development
+
+```bash
+npm install
+npm run dev      # dev server
+npm test         # unit tests
+npm run build    # production build into dist/
+```
+
+Built with Vite, Preact and TypeScript; IndexedDB storage; a service worker for offline use. Thanks to foliate-js, pdf.js, PaddleOCR, ppu-paddle-ocr, ONNX Runtime Web, Tesseract.js, fflate, idb and Preact (licenses listed above).
