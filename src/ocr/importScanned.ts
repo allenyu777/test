@@ -59,11 +59,17 @@ export async function createScannedBook(
   }
   await db.saveBook(meta, { id, blocks: [], heads: {}, toc: [], sections: [], pages: [] })
   await refreshLibrary()
-  // 首次使用本机识别要先下载识别模型，显示下载进度
-  const stopProgress = onModelProgress((loaded, total) => {
-    const pct = Math.min(99, Math.round((loaded / total) * 100))
-    setProgress(Math.min(1, loaded / total), `首次使用，正在下载识别模型 ${pct}%（约 ${Math.round(total / 1e6)} MB，之后离线可用）`)
-  })
+  // 本机识别要先加载识别模型（首次使用要下载），显示进度
+  const stopProgress =
+    choice.engine === 'local'
+      ? onModelProgress(({ loaded, total, cached }) => {
+          const pct = Math.min(99, Math.round((loaded / total) * 100))
+          setProgress(
+            Math.min(1, loaded / total),
+            cached ? '正在加载识别引擎…' : `首次使用，正在下载识别模型 ${pct}%（约 ${Math.round(total / 1e6)} MB，之后离线可用）`,
+          )
+        })
+      : () => {}
   try {
     // 先识别到出现第一段文字为止（第一页常是空白或纯图片封面）
     await ocrRunner.process(id, {

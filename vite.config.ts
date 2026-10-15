@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import type { Plugin } from 'vite'
-import { cpSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { cpSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs'
+import { dirname, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 
 // 文字识别（PaddleOCR）的模型：发布时复制到 dist/paddle/，开发时直接从 models/paddle/ 提供
@@ -33,6 +33,41 @@ function paddleModels(): Plugin {
   }
 }
 
+// 备用识别引擎 Tesseract（设备运行不了 PaddleOCR 时用）：发布时复制到 dist/tesseract/，开发时直接从 node_modules 提供
+const TESSERACT_FILES: Record<string, string> = {
+  'worker.min.js': 'node_modules/tesseract.js/dist/worker.min.js',
+  'core/tesseract-core-simd-lstm.wasm.js': 'node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
+  'core/tesseract-core-lstm.wasm.js': 'node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js',
+  'lang/chi_sim.traineddata.gz': 'node_modules/@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz',
+  'lang/chi_tra.traineddata.gz': 'node_modules/@tesseract.js-data/chi_tra/4.0.0_best_int/chi_tra.traineddata.gz',
+  'lang/eng.traineddata.gz': 'node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz',
+}
+
+function tesseractAssets(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'tingshu-tesseract',
+    configResolved(config) {
+      outDir = config.build.outDir
+    },
+    configureServer(server) {
+      server.middlewares.use('/tesseract/', (req, res, next) => {
+        const source = TESSERACT_FILES[(req.url ?? '').replace(/^\//, '').split('?')[0]]
+        if (!source) return next()
+        res.setHeader('Content-Type', source.endsWith('.js') ? 'text/javascript' : 'application/octet-stream')
+        res.end(readFileSync(source))
+      })
+    },
+    writeBundle() {
+      for (const [target, source] of Object.entries(TESSERACT_FILES)) {
+        const dest = join(outDir, 'tesseract', target)
+        mkdirSync(dirname(dest), { recursive: true })
+        cpSync(source, dest)
+      }
+    },
+  }
+}
+
 // 构建完成后生成 Service Worker：预缓存全部静态文件，保证离线可用
 function serviceWorker(): Plugin {
   let outDir = 'dist'
@@ -54,20 +89,24 @@ function serviceWorker(): Plugin {
         }
       }
       walk(outDir)
-      // pdf.js 字形表、文字识别模型和运行文件较大，按需下载后再缓存，不预缓存
-      const onDemand = (f: string) => f.startsWith('pdfjs/') || f.startsWith('paddle/') || f.endsWith('.wasm')
-      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !onDemand(f))
+      // pdf.js 字形表、文字识别模型和运行文件较大，按需下载后再缓存，不预缓存。
+      // 每一类单独一个缓存、按内容取版本号：哪一类变了只重新下载那一类
+      const group = (f: string) =>
+        f.startsWith('pdfjs/') ? 'pdfjs' : f.startsWith('paddle/') ? 'paddle' : f.startsWith('tesseract/') ? 'tesseract' : f.endsWith('.wasm') ? 'wasm' : null
+      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !group(f))
       const hash = createHash('sha256')
       for (const f of assets.sort()) hash.update(f).update(readFileSync(join(outDir, f)))
       const version = hash.digest('hex').slice(0, 12)
-      const assetHash = createHash('sha256')
-      for (const f of files.filter(onDemand).sort()) {
-        assetHash.update(f).update(readFileSync(join(outDir, f)))
+      const assetCaches: Record<string, string> = {}
+      for (const name of ['pdfjs', 'paddle', 'tesseract', 'wasm']) {
+        const h = createHash('sha256')
+        for (const f of files.filter(f => group(f) === name).sort()) h.update(f).update(readFileSync(join(outDir, f)))
+        assetCaches[name] = `tingshu-assets-${name}-${h.digest('hex').slice(0, 12)}`
       }
       const template = readFileSync('src/sw-template.js', 'utf8')
       const source = template
         .replace('__VERSION__', version)
-        .replace('__ASSET_VERSION__', assetHash.digest('hex').slice(0, 12))
+        .replace('__ASSET_CACHES__', JSON.stringify(assetCaches))
         .replace('__ASSETS__', JSON.stringify(['./', ...assets.map(f => './' + f)], null, 1))
       writeFileSync(join(outDir, 'sw.js'), source)
     },
@@ -91,7 +130,7 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
-  plugins: [paddleModels(), serviceWorker()],
+  plugins: [paddleModels(), tesseractAssets(), serviceWorker()],
   test: {
     environment: 'jsdom',
     setupFiles: ['tests/setup.ts'],

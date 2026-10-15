@@ -1,8 +1,8 @@
 /* 由 vite.config.ts 在构建时生成 sw.js，请勿直接修改生成结果 */
 const VERSION = '__VERSION__'
 const CACHE = 'tingshu-' + VERSION
-// 按需下载的大文件（PDF 字形表、文字识别模型和运行文件）单独缓存：应用更新时只要这些文件没变就不用重新下载
-const ASSET_CACHE = 'tingshu-assets-' + '__ASSET_VERSION__'
+// 按需下载的大文件（PDF 字形表、文字识别模型和运行文件）按类别单独缓存：应用更新时只要这一类文件没变就不用重新下载
+const ASSET_CACHES = __ASSET_CACHES__
 const ASSETS = __ASSETS__
 
 self.addEventListener('install', event => {
@@ -15,7 +15,7 @@ self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys()
     await Promise.all(keys
-      .filter(key => key.startsWith('tingshu-') && key !== CACHE && key !== ASSET_CACHE)
+      .filter(key => key.startsWith('tingshu-') && key !== CACHE && !Object.values(ASSET_CACHES).includes(key))
       .map(key => caches.delete(key)))
     await self.clients.claim()
   })())
@@ -37,11 +37,14 @@ self.addEventListener('fetch', event => {
     return
   }
   // 预缓存里有就直接用；没有的（PDF 字形表、文字识别文件）首次联网获取后缓存起来
+  const path = url.pathname
+  const group = /\/pdfjs\//.test(path) ? 'pdfjs' : /\/paddle\//.test(path) ? 'paddle' : /\/tesseract\//.test(path) ? 'tesseract' : path.endsWith('.wasm') ? 'wasm' : null
   event.respondWith(
     caches.match(request, { ignoreSearch: true }).then(cached => cached || fetch(request).then(response => {
-      if (response.ok && (/\/(pdfjs|paddle)\//.test(url.pathname) || url.pathname.endsWith('.wasm'))) {
+      if (response.ok && group) {
+        // 大文件要等整个下载完才能存进缓存，用 waitUntil 让 Service Worker 等它存完
         const copy = response.clone()
-        caches.open(ASSET_CACHE).then(cache => cache.put(request, copy))
+        event.waitUntil(caches.open(ASSET_CACHES[group]).then(cache => cache.put(request, copy)).catch(() => {}))
       }
       return response
     })))

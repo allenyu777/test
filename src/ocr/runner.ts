@@ -328,7 +328,10 @@ class OcrRunner {
   /** 没有识别任务时，关闭屏幕常亮并释放识别引擎的内存 */
   private releaseTimer: ReturnType<typeof setTimeout> | null = null
 
-  /** 没有识别任务时，关闭屏幕常亮；过一会儿仍然空闲再释放识别引擎的内存（马上又要识别时不用重新加载模型） */
+  /**
+   * 没有识别任务时，关闭屏幕常亮；空闲 5 分钟后再释放识别引擎的内存
+   * （马上又要识别时不用重新加载模型；也避免频繁重建后台线程，iOS 回收 WebAssembly 内存不及时）
+   */
   private releaseIfIdle() {
     if (this.active > 0 || this.current || this.queue.length) return
     setWakeLock(false, 'ocr')
@@ -337,7 +340,7 @@ class OcrRunner {
       this.releaseTimer = null
       if (this.active > 0 || this.current || this.queue.length) return
       releaseLocalOcr()
-    }, 30_000)
+    }, 5 * 60_000)
   }
 
   private async recognizePage(pdf: PdfDocument, index: number, ocr: OcrInfo, ignore: Set<string>): Promise<string[]> {

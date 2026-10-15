@@ -64,11 +64,5 @@ refreshLibrary()
     toast('无法打开本地数据库：' + (e instanceof Error ? e.message : String(e)), 'error', { duration: 0 })
   })
 registerServiceWorker()
-// 旧版本用 Tesseract 识别文字时缓存在本机的识别数据（现在改用 PaddleOCR），删掉腾出空间
-try {
-  indexedDB.deleteDatabase('keyval-store')
-} catch {
-  // 浏览器不允许时忽略
-}
 // 已添加到主屏幕时申请持久化存储
 if (window.matchMedia?.('(display-mode: standalone)').matches) requestPersistence()
