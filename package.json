@@ -15,7 +15,9 @@
     "fflate": "0.8.3",
     "foliate-js": "1.0.1",
     "idb": "8.0.3",
+    "onnxruntime-web": "1.30.0",
     "pdfjs-dist": "4.10.38",
+    "ppu-paddle-ocr": "6.6.1",
     "preact": "10.29.8",
     "tesseract.js": "6.0.1"
   },

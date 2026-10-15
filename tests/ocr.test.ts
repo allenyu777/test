@@ -183,3 +183,112 @@ describe('PDF watermarks', () => {
     expect(repeatedLineKeys(garbled).size).toBe(0)
   })
 })
+
+import { dropMarginLines, linesToText, type OcrLine } from '../src/ocr/layout'
+import pageLines from './fixtures/ocr-page-lines.json'
+
+describe('page header and footer by position', () => {
+  // 用户那一页（丁戊奇荒）的识别结果：页眉"2 丁戊奇荒"被识别成乱码，而且被斑点拉宽
+  const real = pageLines as OcrLine[]
+  const pageHeight = 2260
+  const body = (y: number, text = '这是一行正文，排得满满的，一共有二十多个字呢。还有。', para = 1): OcrLine => ({ text, para, x0: 120, x1: 1020, y0: y, y1: y + 28 })
+
+  it('drops the running header even when misread and widened by specks', () => {
+    const kept = dropMarginLines(real, pageHeight)
+    expect(kept.map(l => l.text)).not.toContain(real[0].text)
+    expect(kept).toHaveLength(real.length - 1)
+    expect(ocrTextToParagraphs(linesToText(kept))[0].startsWith('另一本书')).toBe(true)
+  })
+  it('keeps a body line that starts the page and a big chapter title', () => {
+    const lines = [body(230, '的方法。', 0), body(280), body(329), body(378)]
+    lines[0].x1 = 300
+    expect(dropMarginLines(lines, pageHeight)).toHaveLength(4)
+    const title: OcrLine = { text: '第三章 灾荒', para: 0, x0: 400, x1: 700, y0: 150, y1: 210 }
+    expect(dropMarginLines([title, body(330), body(379), body(428)], pageHeight)).toHaveLength(4)
+  })
+  it('drops a page number at the bottom but not the last short line of text', () => {
+    const folio: OcrLine = { text: '23', para: 9, x0: 560, x1: 590, y0: 2050, y1: 2075 }
+    const lines = [body(1800), body(1849), body(1898, '最后一行。', 2), folio]
+    lines[2].x1 = 300
+    expect(dropMarginLines(lines, pageHeight).map(l => l.text)).toEqual(lines.slice(0, 3).map(l => l.text))
+  })
+})
+
+import { assignParagraphs } from '../src/ocr/layout'
+
+describe('paragraphs from line positions', () => {
+  const line = (y: number, text: string, x0 = 120, x1 = 1020) => ({ text, x0, x1, y0: y, y1: y + 28 })
+  it('starts a paragraph at an indented line or after a short line', () => {
+    const paras = assignParagraphs([
+      line(100, '接上一页的正文，一直写到这一行的末尾都没有空出来的地方'),
+      line(149, '这一段到这里结束了。', 120, 500),
+      line(198, '新的一段开头缩进了两个字，所以是新的一段，后面还有很多字', 176),
+      line(247, '这一行接着上一行，还是同一段，一直写到这一行的末尾为止啊'),
+      line(296, '最后一行。', 120, 300),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 1, 1, 1])
+  })
+  it('starts a paragraph after a large vertical gap', () => {
+    const paras = assignParagraphs([
+      line(100, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(149, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(400, '隔了很远的另一部分，也写满了这一整行的文字没有任何空出来'),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 1])
+  })
+})
+
+import { groupsToLines, type OcrBox } from '../src/ocr/layout'
+
+describe('layout review cases', () => {
+  const pageHeight = 2260
+  const full = (y: number, text = '这是一行正文，排得满满的，一共有二十多个字呢。还有字。', para = 1): OcrLine => ({ text, para, x0: 120, x1: 1020, y0: y, y1: y + 28 })
+
+  it('keeps a short real line at the top edge after a scene break', () => {
+    const lines = [{ ...full(120, '这一夜，谁也没有睡着。'), x1: 420 }, full(260), full(309), full(358)]
+    expect(dropMarginLines(lines, pageHeight)).toHaveLength(4)
+  })
+  it('keeps a one-line footnote at the bottom', () => {
+    const note: OcrLine = { text: '①见《山西通志》卷八十二，光绪十八年刻本。', para: 9, x0: 120, x1: 640, y0: 2000, y1: 2022 }
+    const lines = [full(1700), full(1749), full(1798), note]
+    expect(dropMarginLines(lines, pageHeight)).toContain(note)
+  })
+  it('drops a numbered header on a page with a single body line', () => {
+    const header: OcrLine = { text: '第三章 灾荒与社会 45', para: 0, x0: 700, x1: 1020, y0: 110, y1: 136 }
+    const kept = dropMarginLines([header, full(220, '刻有当时的粮价，是研究这段历史的珍贵材料。')], pageHeight)
+    expect(kept.map(l => l.text)).toEqual(['刻有当时的粮价，是研究这段历史的珍贵材料。'])
+  })
+  it('splits two columns and reads the left column first', () => {
+    const box = (text: string, x: number, y: number): OcrBox => ({ text, x, y, w: 380, h: 28 })
+    const groups: OcrBox[][] = []
+    for (let i = 0; i < 6; i++) groups.push([box(`左${i}行文字`, 100, 200 + i * 50), box(`右${i}行文字`, 560, 200 + i * 50)])
+    const lines = groupsToLines(groups)
+    expect(lines.map(l => l.text)).toEqual([0, 1, 2, 3, 4, 5].map(i => `左${i}行文字`).concat([0, 1, 2, 3, 4, 5].map(i => `右${i}行文字`)))
+    // 换栏时开始新的一段
+    const paras = assignParagraphs(lines)
+    expect(paras[6].para).toBeGreaterThan(paras[5].para)
+  })
+  it('keeps a single-column line with a wide gap in one piece', () => {
+    const lines = groupsToLines([[{ text: '第一章', x: 300, y: 100, w: 120, h: 40 }, { text: '风起', x: 600, y: 100, w: 80, h: 40 }]])
+    expect(lines.map(l => l.text)).toEqual(['第一章 风起'])
+  })
+  it('finds indents when most paragraphs are short', () => {
+    // 两行一段的对话：大多数整行都是缩进的首行
+    const lines: Omit<OcrLine, 'para'>[] = []
+    let y = 100
+    for (let i = 0; i < 6; i++) {
+      lines.push({ text: '“回家吧。”他头也不回地说，天快黑了，再不走就赶不上', x0: 176, x1: 1020, y0: y, y1: y + 28 })
+      lines.push({ text: '最后一班车了，你要是不走我可就先走了啊，到时候别怪我', x0: 120, x1: 1020, y0: y + 49, y1: y + 77 })
+      y += 98
+    }
+    expect(new Set(assignParagraphs(lines).map(l => l.para)).size).toBe(6)
+  })
+})
+
+describe('header with specks read as a full stop', () => {
+  it('still drops a numbered header whose specks became a trailing period', () => {
+    const header: OcrLine = { text: '2 了 丁 戊 麻 荒 .', para: 0, x0: 116, x1: 954, y0: 113, y1: 146 }
+    const body = [232, 280, 329, 378].map(y => ({ text: '这是一行正文，排得满满的，一共有二十多个字呢。还有字。', para: 1, x0: 119, x1: 1020, y0: y, y1: y + 27 }))
+    expect(dropMarginLines([header, ...body], 2260)).toHaveLength(4)
+  })
+})

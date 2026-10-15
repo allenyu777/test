@@ -4,7 +4,36 @@ import { cpSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync }
 import { dirname, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 
-// 文字识别（Tesseract）需要的文件：发布时复制到 dist/tesseract/，开发时直接从 node_modules 提供
+// 文字识别（PaddleOCR）的模型：发布时复制到 dist/paddle/，开发时直接从 models/paddle/ 提供
+const PADDLE_DIR = 'models/paddle'
+
+function paddleModels(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'tingshu-paddle-models',
+    configResolved(config) {
+      outDir = config.build.outDir
+    },
+    configureServer(server) {
+      server.middlewares.use('/paddle/', (req, res, next) => {
+        const name = (req.url ?? '').replace(/^\//, '').split('?')[0]
+        if (!/^[\w.-]+$/.test(name)) return next()
+        try {
+          const data = readFileSync(join(PADDLE_DIR, name))
+          res.setHeader('Content-Type', name.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'application/octet-stream')
+          res.end(data)
+        } catch {
+          next()
+        }
+      })
+    },
+    writeBundle() {
+      cpSync(PADDLE_DIR, join(outDir, 'paddle'), { recursive: true })
+    },
+  }
+}
+
+// 备用识别引擎 Tesseract（设备运行不了 PaddleOCR 时用）：发布时复制到 dist/tesseract/，开发时直接从 node_modules 提供
 const TESSERACT_FILES: Record<string, string> = {
   'worker.min.js': 'node_modules/tesseract.js/dist/worker.min.js',
   'core/tesseract-core-simd-lstm.wasm.js': 'node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
@@ -60,19 +89,24 @@ function serviceWorker(): Plugin {
         }
       }
       walk(outDir)
-      // pdf.js 字形表和文字识别文件较大，按需下载后再缓存，不预缓存
-      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !f.startsWith('pdfjs/') && !f.startsWith('tesseract/'))
+      // pdf.js 字形表、文字识别模型和运行文件较大，按需下载后再缓存，不预缓存。
+      // 每一类单独一个缓存、按内容取版本号：哪一类变了只重新下载那一类
+      const group = (f: string) =>
+        f.startsWith('pdfjs/') ? 'pdfjs' : f.startsWith('paddle/') ? 'paddle' : f.startsWith('tesseract/') ? 'tesseract' : f.endsWith('.wasm') ? 'wasm' : null
+      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !group(f))
       const hash = createHash('sha256')
       for (const f of assets.sort()) hash.update(f).update(readFileSync(join(outDir, f)))
       const version = hash.digest('hex').slice(0, 12)
-      const assetHash = createHash('sha256')
-      for (const f of files.filter(f => f.startsWith('pdfjs/') || f.startsWith('tesseract/')).sort()) {
-        assetHash.update(f).update(readFileSync(join(outDir, f)))
+      const assetCaches: Record<string, string> = {}
+      for (const name of ['pdfjs', 'paddle', 'tesseract', 'wasm']) {
+        const h = createHash('sha256')
+        for (const f of files.filter(f => group(f) === name).sort()) h.update(f).update(readFileSync(join(outDir, f)))
+        assetCaches[name] = `tingshu-assets-${name}-${h.digest('hex').slice(0, 12)}`
       }
       const template = readFileSync('src/sw-template.js', 'utf8')
       const source = template
         .replace('__VERSION__', version)
-        .replace('__ASSET_VERSION__', assetHash.digest('hex').slice(0, 12))
+        .replace('__ASSET_CACHES__', JSON.stringify(assetCaches))
         .replace('__ASSETS__', JSON.stringify(['./', ...assets.map(f => './' + f)], null, 1))
       writeFileSync(join(outDir, 'sw.js'), source)
     },
@@ -89,7 +123,14 @@ export default defineConfig({
     target: ['safari15', 'es2020'],
     chunkSizeWarningLimit: 1500,
   },
-  plugins: [tesseractAssets(), serviceWorker()],
+  resolve: {
+    // 只用 WebAssembly 版的 ONNX Runtime（不打包 WebGPU 版，少下载十几 MB）
+    alias: [{ find: /^onnxruntime-web$/, replacement: 'onnxruntime-web/wasm' }],
+  },
+  worker: {
+    format: 'es',
+  },
+  plugins: [paddleModels(), tesseractAssets(), serviceWorker()],
   test: {
     environment: 'jsdom',
     setupFiles: ['tests/setup.ts'],

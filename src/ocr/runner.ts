@@ -17,6 +17,7 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
+import { dropMarginLines, linesToText } from './layout'
 import {
   continuesAcrossPage,
   edgeKeys,
@@ -325,10 +326,21 @@ class OcrRunner {
   }
 
   /** 没有识别任务时，关闭屏幕常亮并释放识别引擎的内存 */
+  private releaseTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * 没有识别任务时，关闭屏幕常亮；空闲 5 分钟后再释放识别引擎的内存
+   * （马上又要识别时不用重新加载模型；也避免频繁重建后台线程，iOS 回收 WebAssembly 内存不及时）
+   */
   private releaseIfIdle() {
     if (this.active > 0 || this.current || this.queue.length) return
     setWakeLock(false, 'ocr')
-    releaseLocalOcr()
+    if (this.releaseTimer) clearTimeout(this.releaseTimer)
+    this.releaseTimer = setTimeout(() => {
+      this.releaseTimer = null
+      if (this.active > 0 || this.current || this.queue.length) return
+      releaseLocalOcr()
+    }, 5 * 60_000)
   }
 
   private async recognizePage(pdf: PdfDocument, index: number, ocr: OcrInfo, ignore: Set<string>): Promise<string[]> {
@@ -345,7 +357,10 @@ class OcrRunner {
     }
     const canvas = await renderPage(pdf, index)
     try {
-      return ocrTextToParagraphs(await recognizeCanvas(canvas, ocr.engine, ocr.lang))
+      const pageHeight = canvas.height
+      const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
+      // 本机识别有每一行的位置：先按位置去掉页眉页脚
+      return ocrTextToParagraphs(result.lines ? linesToText(dropMarginLines(result.lines, pageHeight)) : result.text)
     } finally {
       // 及时释放画布内存（iOS 对画布总内存有限制）
       canvas.width = 0

@@ -309,7 +309,7 @@ export function SettingsPage() {
           <br />
           <b style={{ color: 'var(--text)' }}>系统声音</b>：iPhone 只把自带的基础声音提供给网页（防止设备指纹追踪），在「朗读内容」里另外下载的增强 / 高级声音和 Siri 声音都不会出现在列表里。可以试试「声音」列表最上面的「跟随 iPhone 设置」（实验）：由 iPhone 按「朗读内容」里选中的声音来读，部分 iOS 版本有效，试听对比就知道。想要稳定的自然声音，请用 Azure 或 OpenAI 云端声音。
           <br />
-          <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费离线，云端识别更准更快；识别期间请让 App 保持在前台。
+          <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费、离线、不上传，用的是 PaddleOCR 模型，简体繁体都很准（首次下载约 30 MB）；页眉、页码会自动去掉。识别期间请让 App 保持在前台。
           <br />
           <b style={{ color: 'var(--text)' }}>做笔记</b>：在正文点一下句子，选「笔记」或「语音」；播放时可直接点底部「语音笔记」。
           <br />
@@ -319,7 +319,7 @@ export function SettingsPage() {
         </div>
       </div>
       <div class="about">
-        听书 v1.3 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、Tesseract.js（Apache-2.0）
+        听书 v1.4 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、PaddleOCR 模型（Apache-2.0）、ppu-paddle-ocr（MIT）、ONNX Runtime（MIT）、Tesseract.js（Apache-2.0）
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}
