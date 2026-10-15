@@ -3,6 +3,7 @@ import * as db from '../db'
 import type { BookMeta, OcrEngine, OcrLang } from '../db'
 import { refreshLibrary } from '../library'
 import { renderPage, type ScannedPdfError } from '../parsers/pdf'
+import { onModelProgress } from './engines'
 import { ocrRunner } from './runner'
 
 export interface ScanChoice {
@@ -58,17 +59,23 @@ export async function createScannedBook(
   }
   await db.saveBook(meta, { id, blocks: [], heads: {}, toc: [], sections: [], pages: [] })
   await refreshLibrary()
+  // 首次使用本机识别要先下载识别模型，显示下载进度
+  const stopProgress = onModelProgress((loaded, total) => {
+    const pct = Math.min(99, Math.round((loaded / total) * 100))
+    setProgress(Math.min(1, loaded / total), `首次使用，正在下载识别模型 ${pct}%（约 ${Math.round(total / 1e6)} MB，之后离线可用）`)
+  })
   try {
     // 先识别到出现第一段文字为止（第一页常是空白或纯图片封面）
     await ocrRunner.process(id, {
       untilText: true,
-      onPage: (done, total) =>
-        setProgress(done / total, `正在识别第 ${done + 1} / ${total} 页${choice.engine === 'local' && done === 0 ? '（首次使用需要下载识别数据）' : ''}`),
+      onPage: (done, total) => setProgress(done / total, `正在识别第 ${done + 1} / ${total} 页`),
     })
   } catch (e) {
     await db.deleteBook(id)
     await refreshLibrary()
     throw e
+  } finally {
+    stopProgress()
   }
   const saved = await db.getBook(id)
   const content = await db.getContent(id)

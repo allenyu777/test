@@ -5,7 +5,7 @@
 ## 功能
 
 - **多格式**：EPUB、MOBI、AZW3、PDF、TXT（自动识别 UTF-8 / GBK / Big5）、FB2、DOCX、HTML、Markdown
-- **扫描版或乱码 PDF**：自动识别文字（OCR）。文字层是乱码的 PDF（字体缺少编码，繁体/老版本 PDF 常见）也会自动发现并改为按页面图片识别；繁体书自动选繁体识别，有书签时用书签生成目录。本机识别免费、离线、不上传；也可用 OpenAI 兼容的视觉模型做云端识别。逐页在后台识别，前几页好了就能开始听，边听边识别
+- **扫描版或乱码 PDF**：自动识别文字（OCR）。文字层是乱码的 PDF（字体缺少编码，繁体/老版本 PDF 常见）也会自动发现并改为按页面图片识别；繁体书自动选繁体识别，有书签时用书签生成目录。本机识别用 PaddleOCR 模型（简体、繁体、英文都很准，首次使用下载约 30 MB，之后离线可用），免费、不上传；页眉、页码按版面位置自动去掉；也可用 OpenAI 兼容的视觉模型做云端识别。逐页在后台识别，前几页好了就能开始听，边听边识别
 - **声音可选**
   - 系统声音：免费、离线。iPhone 只把自带的基础声音提供给网页；另有「跟随 iPhone 设置」（实验）选项，部分 iOS 版本能用上你在系统里下载的高品质声音
   - Azure 神经语音（推荐）：晓晓、云希等，非常自然；免费额度每月 50 万字；支持锁屏后台连续播放
@@ -58,5 +58,5 @@ npm run build    # 生产构建，输出到 dist/
 
 - [foliate-js](https://github.com/johnfactotum/foliate-js)（MIT）：EPUB / MOBI / AZW3 / FB2 解析
 - [pdf.js](https://github.com/mozilla/pdf.js)（Apache-2.0）：PDF 文字提取和页面渲染
-- [Tesseract.js](https://github.com/naptha/tesseract.js)（Apache-2.0）：扫描版 PDF 的本机文字识别
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)（Apache-2.0）的 PP-OCR 模型、[ppu-paddle-ocr](https://github.com/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr)（MIT）、[ONNX Runtime Web](https://github.com/microsoft/onnxruntime)（MIT）：扫描版 PDF 的本机文字识别
 - [fflate](https://github.com/101arrowz/fflate)（MIT）、[idb](https://github.com/jakearchibald/idb)（ISC）、[Preact](https://preactjs.com)（MIT）

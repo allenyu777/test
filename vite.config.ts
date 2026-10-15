@@ -1,40 +1,34 @@
 import { defineConfig } from 'vitest/config'
 import type { Plugin } from 'vite'
-import { cpSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { cpSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 
-// 文字识别（Tesseract）需要的文件：发布时复制到 dist/tesseract/，开发时直接从 node_modules 提供
-const TESSERACT_FILES: Record<string, string> = {
-  'worker.min.js': 'node_modules/tesseract.js/dist/worker.min.js',
-  'core/tesseract-core-simd-lstm.wasm.js': 'node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
-  'core/tesseract-core-lstm.wasm.js': 'node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js',
-  'lang/chi_sim.traineddata.gz': 'node_modules/@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz',
-  'lang/chi_tra.traineddata.gz': 'node_modules/@tesseract.js-data/chi_tra/4.0.0_best_int/chi_tra.traineddata.gz',
-  'lang/eng.traineddata.gz': 'node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz',
-}
+// 文字识别（PaddleOCR）的模型：发布时复制到 dist/paddle/，开发时直接从 models/paddle/ 提供
+const PADDLE_DIR = 'models/paddle'
 
-function tesseractAssets(): Plugin {
+function paddleModels(): Plugin {
   let outDir = 'dist'
   return {
-    name: 'tingshu-tesseract',
+    name: 'tingshu-paddle-models',
     configResolved(config) {
       outDir = config.build.outDir
     },
     configureServer(server) {
-      server.middlewares.use('/tesseract/', (req, res, next) => {
-        const source = TESSERACT_FILES[(req.url ?? '').replace(/^\//, '').split('?')[0]]
-        if (!source) return next()
-        res.setHeader('Content-Type', source.endsWith('.js') ? 'text/javascript' : 'application/octet-stream')
-        res.end(readFileSync(source))
+      server.middlewares.use('/paddle/', (req, res, next) => {
+        const name = (req.url ?? '').replace(/^\//, '').split('?')[0]
+        if (!/^[\w.-]+$/.test(name)) return next()
+        try {
+          const data = readFileSync(join(PADDLE_DIR, name))
+          res.setHeader('Content-Type', name.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'application/octet-stream')
+          res.end(data)
+        } catch {
+          next()
+        }
       })
     },
     writeBundle() {
-      for (const [target, source] of Object.entries(TESSERACT_FILES)) {
-        const dest = join(outDir, 'tesseract', target)
-        mkdirSync(dirname(dest), { recursive: true })
-        cpSync(source, dest)
-      }
+      cpSync(PADDLE_DIR, join(outDir, 'paddle'), { recursive: true })
     },
   }
 }
@@ -60,13 +54,14 @@ function serviceWorker(): Plugin {
         }
       }
       walk(outDir)
-      // pdf.js 字形表和文字识别文件较大，按需下载后再缓存，不预缓存
-      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !f.startsWith('pdfjs/') && !f.startsWith('tesseract/'))
+      // pdf.js 字形表、文字识别模型和运行文件较大，按需下载后再缓存，不预缓存
+      const onDemand = (f: string) => f.startsWith('pdfjs/') || f.startsWith('paddle/') || f.endsWith('.wasm')
+      const assets = files.filter(f => f !== 'sw.js' && !f.endsWith('.map') && !onDemand(f))
       const hash = createHash('sha256')
       for (const f of assets.sort()) hash.update(f).update(readFileSync(join(outDir, f)))
       const version = hash.digest('hex').slice(0, 12)
       const assetHash = createHash('sha256')
-      for (const f of files.filter(f => f.startsWith('pdfjs/') || f.startsWith('tesseract/')).sort()) {
+      for (const f of files.filter(onDemand).sort()) {
         assetHash.update(f).update(readFileSync(join(outDir, f)))
       }
       const template = readFileSync('src/sw-template.js', 'utf8')
@@ -89,7 +84,14 @@ export default defineConfig({
     target: ['safari15', 'es2020'],
     chunkSizeWarningLimit: 1500,
   },
-  plugins: [tesseractAssets(), serviceWorker()],
+  resolve: {
+    // 只用 WebAssembly 版的 ONNX Runtime（不打包 WebGPU 版，少下载十几 MB）
+    alias: [{ find: /^onnxruntime-web$/, replacement: 'onnxruntime-web/wasm' }],
+  },
+  worker: {
+    format: 'es',
+  },
+  plugins: [paddleModels(), serviceWorker()],
   test: {
     environment: 'jsdom',
     setupFiles: ['tests/setup.ts'],

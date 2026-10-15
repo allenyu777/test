@@ -1,7 +1,7 @@
 /* 由 vite.config.ts 在构建时生成 sw.js，请勿直接修改生成结果 */
 const VERSION = '__VERSION__'
 const CACHE = 'tingshu-' + VERSION
-// 按需下载的大文件（PDF 字形表、文字识别引擎）单独缓存：应用更新时只要这些文件没变就不用重新下载
+// 按需下载的大文件（PDF 字形表、文字识别模型和运行文件）单独缓存：应用更新时只要这些文件没变就不用重新下载
 const ASSET_CACHE = 'tingshu-assets-' + '__ASSET_VERSION__'
 const ASSETS = __ASSETS__
 
@@ -39,7 +39,7 @@ self.addEventListener('fetch', event => {
   // 预缓存里有就直接用；没有的（PDF 字形表、文字识别文件）首次联网获取后缓存起来
   event.respondWith(
     caches.match(request, { ignoreSearch: true }).then(cached => cached || fetch(request).then(response => {
-      if (response.ok && /\/(pdfjs|tesseract)\//.test(url.pathname)) {
+      if (response.ok && (/\/(pdfjs|paddle)\//.test(url.pathname) || url.pathname.endsWith('.wasm'))) {
         const copy = response.clone()
         caches.open(ASSET_CACHE).then(cache => cache.put(request, copy))
       }

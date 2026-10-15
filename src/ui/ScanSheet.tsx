@@ -26,8 +26,8 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
   const cloud = cloudOcrReady()
   const [engine, setEngine] = useState<OcrEngine>('local')
   const [lang, setLang] = useState<OcrLang>(langHint)
-  // 本机识别在手机上大约每页 5 秒；云端约 3 秒
-  const estimate = formatDuration(pages * (engine === 'local' ? 5 : 3))
+  // 本机识别在手机上大约每页 10 秒；云端约 3 秒
+  const estimate = formatDuration(pages * (engine === 'local' ? 10 : 3))
 
   return (
     <Sheet
@@ -58,14 +58,14 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
           <button class="option" style={{ minHeight: '62px' }} onClick={() => setEngine('local')}>
             <div>
               <div>本机识别</div>
-              <div class="muted small">免费、不上传、可离线；首次需下载约 2–5 MB 识别数据</div>
+              <div class="muted small">免费、不上传、可离线，简体繁体都识别得很准；首次需下载约 30 MB 识别模型（建议连 Wi-Fi）</div>
             </div>
             {engine === 'local' && <span class="check">✓</span>}
           </button>
           <button class="option" style={{ minHeight: '62px' }} disabled={!cloud} onClick={() => setEngine('cloud')}>
             <div>
-              <div>云端识别（更准、更快）</div>
-              <div class="muted small">{cloud ? '使用设置里的 OpenAI 兼容接口，会产生少量费用' : '需要先在设置里填写 OpenAI 兼容接口的密钥'}</div>
+              <div>云端识别（更快）</div>
+              <div class="muted small">{cloud ? '使用设置里的 OpenAI 兼容接口：页面图片会上传，会产生费用' : '需要先在设置里填写 OpenAI 兼容接口的密钥'}</div>
             </div>
             {engine === 'cloud' && <span class="check">✓</span>}
           </button>

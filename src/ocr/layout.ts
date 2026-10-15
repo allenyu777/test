@@ -21,6 +21,13 @@ function median(xs: number[]): number {
   return s[Math.floor(s.length / 2)]
 }
 
+/** 较小的中位数：行距这类数里混着个别特别大的（页眉下的空白、分节），行数少时也不被它带偏 */
+function lowerMedian(xs: number[]): number {
+  if (!xs.length) return 0
+  const s = xs.slice().sort((a, b) => a - b)
+  return s[Math.floor((s.length - 1) / 2)]
+}
+
 /** 同一高度上的几行（页码和书名可能被识别成左右两行） */
 interface Row {
   lines: OcrLine[]
@@ -72,7 +79,7 @@ export function dropMarginLines(lines: OcrLine[], pageHeight: number): OcrLine[]
   // 正文行与行之间的空隙（页眉和正文之间的空隙明显更大）
   const gaps: number[] = []
   for (let i = 1; i < rows.length; i++) gaps.push(rows[i].y0 - rows[i - 1].y1)
-  const lineGap = Math.max(0, median(gaps))
+  const lineGap = Math.max(0, lowerMedian(gaps))
   const bodyChars = median(body.map(l => l.text.replace(/\s+/g, '').length))
 
   const margin = (row: Row, gap: number, atEdge: boolean) => {
@@ -104,4 +111,34 @@ export function linesToText(lines: OcrLine[]): string {
     para = l.para
   }
   return out
+}
+
+/**
+ * 按版面把行分成段落（PaddleOCR 只给出一行一行的结果）：
+ * 首行缩进、上一行没写满、或者和上一行隔得比平时远，就是新的一段。
+ */
+export function assignParagraphs(lines: Omit<OcrLine, 'para'>[]): OcrLine[] {
+  const real = lines.filter(l => hasWords(l.text) && height(l) > 0)
+  if (!real.length) return []
+  const maxWidth = Math.max(...real.map(width))
+  const body = real.filter(l => width(l) >= maxWidth * 0.6)
+  const lineHeight = median(body.map(height)) || median(real.map(height))
+  const left = median(body.map(l => l.x0))
+  const right = median(body.map(l => l.x1))
+  const gaps: number[] = []
+  for (let i = 1; i < real.length; i++) gaps.push(real[i].y0 - real[i - 1].y1)
+  const lineGap = Math.max(0, lowerMedian(gaps))
+  let para = 0
+  return real.map((l, i) => {
+    if (i > 0) {
+      const prev = real[i - 1]
+      const indented = l.x0 > left + lineHeight * 1.2
+      const prevShort = prev.x1 < right - lineHeight * 1.5
+      const farApart = l.y0 - prev.y1 > Math.max(lineGap * 2, lineHeight * 0.8)
+      // 回到上面（分栏）
+      const jumpedUp = l.y1 < prev.y0
+      if (indented || prevShort || farApart || jumpedUp) para++
+    }
+    return { ...l, para }
+  })
 }

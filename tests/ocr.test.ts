@@ -213,3 +213,27 @@ describe('page header and footer by position', () => {
     expect(dropMarginLines(lines, pageHeight).map(l => l.text)).toEqual(lines.slice(0, 3).map(l => l.text))
   })
 })
+
+import { assignParagraphs } from '../src/ocr/layout'
+
+describe('paragraphs from line positions', () => {
+  const line = (y: number, text: string, x0 = 120, x1 = 1020) => ({ text, x0, x1, y0: y, y1: y + 28 })
+  it('starts a paragraph at an indented line or after a short line', () => {
+    const paras = assignParagraphs([
+      line(100, '接上一页的正文，一直写到这一行的末尾都没有空出来的地方'),
+      line(149, '这一段到这里结束了。', 120, 500),
+      line(198, '新的一段开头缩进了两个字，所以是新的一段，后面还有很多字', 176),
+      line(247, '这一行接着上一行，还是同一段，一直写到这一行的末尾为止啊'),
+      line(296, '最后一行。', 120, 300),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 1, 1, 1])
+  })
+  it('starts a paragraph after a large vertical gap', () => {
+    const paras = assignParagraphs([
+      line(100, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(149, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(400, '隔了很远的另一部分，也写满了这一整行的文字没有任何空出来'),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 1])
+  })
+})

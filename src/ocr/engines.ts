@@ -1,7 +1,8 @@
-// 文字识别引擎：本机（Tesseract，离线免费）或云端（OpenAI 兼容的视觉模型）
+// 文字识别引擎：本机（PaddleOCR，免费、离线、不上传）或云端（OpenAI 兼容的视觉模型）
 import type { OcrLang } from '../db'
 import { settings } from '../settings'
-import type { OcrLine } from './layout'
+import { assignParagraphs, type OcrLine } from './layout'
+import type { PaddleLine, WorkerRequest, WorkerResponse } from './paddle.worker'
 
 /** 一页的识别结果；本机识别同时给出每一行的位置（用来去掉页眉页脚） */
 export interface OcrResult {
@@ -9,96 +10,91 @@ export interface OcrResult {
   lines?: OcrLine[]
 }
 
-type TesseractWorker = Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>>
-
-const workers = new Map<OcrLang, Promise<TesseractWorker>>()
-
-function assetBase(): string {
-  return new URL('tesseract/', document.baseURI).href
+type Pending = {
+  resolve: (lines: PaddleLine[]) => void
+  reject: (e: Error) => void
+  onProgress?: (loaded: number, total: number) => void
 }
 
-function localWorker(lang: OcrLang): Promise<TesseractWorker> {
-  let worker = workers.get(lang)
+let worker: Worker | null = null
+let seq = 0
+const pending = new Map<number, Pending>()
+const progressListeners = new Set<(loaded: number, total: number) => void>()
+
+/** 首次识别时下载识别模型的进度（约 30 MB） */
+export function onModelProgress(fn: (loaded: number, total: number) => void): () => void {
+  progressListeners.add(fn)
+  return () => progressListeners.delete(fn)
+}
+
+function failAll(error: Error) {
+  for (const p of pending.values()) p.reject(error)
+  pending.clear()
+}
+
+function localWorker(): Worker {
   if (!worker) {
-    // tesseract.js 在识别数据下载失败时不会结束等待，这里自己加上出错处理和超时
-    worker = new Promise<TesseractWorker>((resolve, reject) => {
-      let settled = false
-      const fail = (e: unknown) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        reject(e instanceof Error ? e : new Error('本机识别引擎加载失败，请联网后点「继续识别」'))
+    const w = new Worker(new URL('./paddle.worker.ts', import.meta.url), { type: 'module' })
+    w.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const msg = event.data
+      const job = pending.get(msg.id)
+      if (msg.type === 'progress') {
+        job?.onProgress?.(msg.loaded, msg.total)
+        progressListeners.forEach(fn => fn(msg.loaded, msg.total))
+        return
       }
-      const timer = setTimeout(() => fail(new Error('下载识别数据超时，请检查网络后点「继续识别」')), 120_000)
-      import('tesseract.js')
-        .then(({ createWorker }) =>
-          createWorker(lang.split('+'), 1 /* 只用 LSTM 模型 */, {
-            workerPath: assetBase() + 'worker.min.js',
-            corePath: assetBase() + 'core',
-            langPath: assetBase() + 'lang',
-            workerBlobURL: false,
-            gzip: true,
-            // 识别数据缓存在本机，之后离线也能用
-            cacheMethod: 'write',
-            errorHandler: () => fail(new Error('识别数据下载失败，请联网后点「继续识别」')),
-          }),
-        )
-        .then(
-          w => {
-            if (settled) {
-              w.terminate().catch(() => {})
-              return
-            }
-            settled = true
-            clearTimeout(timer)
-            resolve(w)
-          },
-          fail,
-        )
-    })
-    const current = worker
-    current.catch(() => {
-      if (workers.get(lang) === current) workers.delete(lang)
-    })
-    workers.set(lang, current)
+      if (!job) return
+      pending.delete(msg.id)
+      if (msg.type === 'result') job.resolve(msg.lines)
+      else job.reject(new Error(msg.message))
+    }
+    w.onerror = event => {
+      event.preventDefault()
+      // 后台线程崩溃（多半是内存不够）：下次重新创建
+      if (worker === w) worker = null
+      w.terminate()
+      failAll(new Error('本机识别引擎出错，稍后会重试'))
+    }
+    worker = w
   }
   return worker
 }
 
 /** 释放本机识别占用的内存 */
 export async function releaseLocalOcr() {
-  const list = [...workers.values()]
-  workers.clear()
-  for (const w of list) {
-    try {
-      await (await w).terminate()
-    } catch {
-      // 已经结束
-    }
-  }
+  const w = worker
+  worker = null
+  w?.terminate()
+  failAll(new Error('识别已停止'))
 }
 
-async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise<OcrResult> {
-  const worker = await localWorker(lang)
+async function recognizeLocal(canvas: HTMLCanvasElement): Promise<OcrResult> {
+  const bitmap = await createImageBitmap(canvas)
+  const id = ++seq
+  const w = localWorker()
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
+  // 首次要下载模型：一段时间没有任何进展才算超时
+  const arm = (ms: number, message: string) => {
+    clearTimeout(timer)
     timer = setTimeout(() => {
+      if (!pending.has(id)) return
+      pending.get(id)!.reject(new Error(message))
+      pending.delete(id)
       // 识别卡住：释放引擎，下次重新创建
       releaseLocalOcr()
-      reject(new Error('这一页识别超时'))
-    }, 180_000)
-  })
+    }, ms)
+  }
   try {
-    const { data } = await Promise.race([worker.recognize(canvas, {}, { text: true, blocks: true }), timeout])
-    const lines: OcrLine[] = []
-    let para = 0
-    for (const block of data.blocks ?? []) {
-      for (const p of block.paragraphs) {
-        for (const l of p.lines) lines.push({ text: l.text, para, ...l.bbox })
-        para++
-      }
-    }
-    return { text: data.text ?? '', lines: lines.length ? lines : undefined }
+    const lines = await new Promise<PaddleLine[]>((resolve, reject) => {
+      pending.set(id, {
+        resolve,
+        reject,
+        onProgress: (loaded, total) => arm(loaded < total ? 60_000 : 180_000, loaded < total ? '下载识别模型超时，请检查网络后点「继续识别」' : '这一页识别超时'),
+      })
+      arm(180_000, '这一页识别超时')
+      w.postMessage({ id, type: 'recognize', bitmap, base: document.baseURI } satisfies WorkerRequest, [bitmap])
+    })
+    return { text: '', lines: assignParagraphs(lines) }
   } finally {
     clearTimeout(timer)
   }
@@ -155,5 +151,5 @@ async function recognizeCloud(canvas: HTMLCanvasElement, lang: OcrLang): Promise
 }
 
 export async function recognizeCanvas(canvas: HTMLCanvasElement, engine: 'local' | 'cloud', lang: OcrLang): Promise<OcrResult> {
-  return engine === 'cloud' ? { text: await recognizeCloud(canvas, lang) } : recognizeLocal(canvas, lang)
+  return engine === 'cloud' ? { text: await recognizeCloud(canvas, lang) } : recognizeLocal(canvas)
 }
