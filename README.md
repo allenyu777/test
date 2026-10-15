@@ -4,6 +4,8 @@
 
 一个给自己用的「听电子书」网页应用（PWA）。在 iPhone 的 Safari 里打开后「添加到主屏幕」，就能像 App 一样全屏使用，不需要上架 App Store。
 
+👉 **立即使用：<https://allenyu777.github.io/test/>**（用 Safari 打开，点「分享 → 添加到主屏幕」）
+
 ## 功能
 
 - **多格式**：EPUB、MOBI、AZW3、PDF、TXT（自动识别 UTF-8 / GBK / Big5）、FB2、DOCX、HTML、Markdown
@@ -99,6 +101,8 @@ npm run build    # 生产构建，输出到 dist/
 ## English
 
 **Tingshu (听书, "listen to books")** is an ebook reader that reads your books aloud: a text-to-speech audiobook player built as a progressive web app (PWA) for iPhone. Open it in Safari and choose "Add to Home Screen" to use it full-screen like a native app, with no App Store needed. The interface is in Chinese; books can be in Chinese, English or other languages.
+
+👉 **Try it: <https://allenyu777.github.io/test/>** (open in Safari, then Share → Add to Home Screen)
 
 ### Features
 
