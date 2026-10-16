@@ -14,17 +14,29 @@ const SKIP_TAGS = new Set([
 ])
 
 const OPS_NS = 'http://www.idpf.org/2007/ops'
-const NOTE_TYPES = /\b(noteref|footnote|endnote|rearnote|doc-noteref|doc-footnote|doc-endnote|doc-backlink)\b/
+const NOTE_BODY_TYPES = /\b(footnotes?|endnotes?|rearnotes?|doc-footnote|doc-endnotes?)\b/
+const NOTE_REF_TYPES = /\b(noteref|doc-noteref)\b/
 const NOTE_MARK = /^\s*[[［(（【]?\s*(\d{1,3}|[a-z]|[*†‡§]+|注\s*\d*|[①-⑳])\s*[\]］)）】]?\s*$/i
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
 
-/** 脚注引用、脚注正文等不朗读 */
-function isNote(el: Element, tag: string): boolean {
+/**
+ * 脚注相关的元素：ref 正文里的注释编号（显示成上标数字）、body 脚注正文（显示成小字）、
+ * skip 返回原文的链接等（不显示）。朗读时都跳过。
+ */
+function noteKind(el: Element, tag: string): 'ref' | 'body' | 'skip' | null {
   const type = `${el.getAttribute('epub:type') ?? ''} ${el.getAttributeNS?.(OPS_NS, 'type') ?? ''} ${el.getAttribute('role') ?? ''}`
-  if (NOTE_TYPES.test(type)) return true
   const cls = el.getAttribute('class') ?? ''
-  if (/duokan-footnote|footnote-content|^footnotes?$/i.test(cls)) return true
-  if ((tag === 'sup' || (tag === 'a' && el.closest?.('sup'))) && NOTE_MARK.test(el.textContent ?? '')) return true
-  return false
+  if (/\bdoc-backlink\b/.test(type)) return 'skip'
+  if (NOTE_BODY_TYPES.test(type) || /duokan-footnote-(content|item)|footnote-content|^footnotes?$/i.test(cls)) return 'body'
+  if (NOTE_REF_TYPES.test(type) || /\bduokan-footnote\b/i.test(cls)) return 'ref'
+  if ((tag === 'sup' || (tag === 'a' && el.closest?.('sup'))) && NOTE_MARK.test(el.textContent ?? '')) return 'ref'
+  return null
+}
+
+/** 注释编号：数字显示成上标（朗读时跳过），其它（图片、字母、星号）不显示 */
+function refText(el: Element): string {
+  const digits = (el.textContent ?? '').replace(/\D/g, '')
+  return digits.length >= 1 && digits.length <= 3 ? digits.replace(/\d/g, d => SUPERSCRIPT_DIGITS[+d]) : ''
 }
 
 /**
@@ -35,10 +47,11 @@ export function extractBlocks(root: Node, builder: BookBuilder, marks?: Map<Elem
   let buf = ''
   let head = 0
   let pre = 0
+  let note = 0
 
   const flush = () => {
     if (buf) {
-      builder.add(buf, head || undefined)
+      builder.add(buf, head || undefined, note > 0)
       buf = ''
     }
   }
@@ -63,8 +76,19 @@ export function extractBlocks(root: Node, builder: BookBuilder, marks?: Map<Elem
     if (type !== 1) return
     const el = node as Element
     const tag = (el.localName || el.nodeName).toLowerCase().replace(/^.*:/, '')
-    if (SKIP_TAGS.has(tag) || isNote(el, tag)) {
+    const kind = noteKind(el, tag)
+    if (SKIP_TAGS.has(tag) || kind === 'skip' || kind === 'ref') {
       if (marks?.has(el)) marks.set(el, builder.length)
+      if (kind === 'ref') buf += refText(el)
+      return
+    }
+    if (kind === 'body') {
+      flush()
+      if (marks?.has(el)) marks.set(el, builder.length)
+      note++
+      for (let c = el.firstChild; c; c = c.nextSibling) walk(c)
+      flush()
+      note--
       return
     }
     const isBlock = BLOCK_TAGS.has(tag)

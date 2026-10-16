@@ -111,7 +111,7 @@ function SectionView({ book, index, notesMap }: { book: Book; index: number; not
     }
     if (last < text.length) children.push(text.slice(last))
     out.push(
-      <p key={b} data-b={b} class={head ? `h h${head}` : undefined}>
+      <p key={b} data-b={b} class={head ? `h h${head}` : book.isNote(b) ? 'fn' : undefined}>
         {children}
       </p>,
     )

@@ -1,4 +1,5 @@
 // 文本工具：分句、清洗、语言识别
+import { stripNoteRefs } from '../parsers/notes'
 
 export interface Sentence {
   /** 句子在段落中的起始偏移 */
@@ -178,8 +179,8 @@ export function splitSentences(text: string, maxLen = 0): Sentence[] {
 }
 
 /** 朗读前的文本清洗：去掉不需要读出来的符号 */
-export function speechText(text: string): string {
-  return text
+export function speechText(text: string, skipNoteRefs = false): string {
+  return (skipNoteRefs ? stripNoteRefs(text) : text)
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/[*_~#=|<>^`]{2,}/g, ' ')
     .replace(/[…]{1,}|\.{3,}/g, '…')

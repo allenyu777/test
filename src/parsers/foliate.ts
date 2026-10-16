@@ -126,6 +126,7 @@ export async function extractFoliateBook(
     lang: langMeta || detectLang(sampleText),
     blocks: builder.blocks,
     heads: builder.heads,
+    notes: builder.notes,
     toc: toc.map(({ title, b, level }) => ({ title, b, level })),
     cover,
   }

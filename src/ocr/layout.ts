@@ -1,4 +1,5 @@
 // 根据识别出的每一行在页面上的位置整理版面：拆开双栏、去掉页眉页脚（页码、书名、章节名）、分段
+import { isNoteStart } from '../parsers/notes'
 import { isPageNumber, withoutPageNumber } from './text'
 
 export interface OcrLine {
@@ -198,6 +199,50 @@ export function dropMarginLines(lines: OcrLine[], pageHeight: number): OcrLine[]
     if (margin(last, last.y0 - prev.y1, last.y0 >= pageHeight * 0.8)) last.lines.forEach(l => drop.add(l))
   }
   return kept.filter(l => !drop.has(l))
+}
+
+/**
+ * 分出页面下方的脚注区。判断依据：从某一行起到页底，字比上面的正文小，
+ * 开头一行带注释编号（〔1〕 [1] ① 1. 等），和正文之间隔着一段空白（脚注线）或者大多数行都带编号。
+ * 上一页没写完的注释（没有编号、字同样小、紧挨着下面的注释）也一起去掉。
+ */
+export function splitFootnotes(lines: OcrLine[], pageHeight: number): { body: OcrLine[]; notes: string[] } {
+  const rows = toRows(lines)
+  const rowHeight = (r: Row) => median(r.lines.map(height))
+  const rowWidth = (r: Row) => Math.max(...r.lines.map(l => l.x1)) - Math.min(...r.lines.map(l => l.x0))
+  const fullWidth = Math.max(0, ...rows.map(rowWidth))
+  for (let k = 2; k < rows.length; k++) {
+    if (rows[k].y0 < pageHeight * 0.4) continue
+    // 上面要有正文（至少两行写满的），不是只有章节标题
+    const body = rows.slice(0, k).filter(r => rowWidth(r) >= fullWidth * 0.7)
+    if (body.length < 2) continue
+    const bodyHeight = median(body.map(rowHeight))
+    const small = (r: Row) => rowHeight(r) <= bodyHeight * 0.88
+    if (!small(rows[k]) || !isNoteStart(rows[k].text, true)) continue
+    const zone = rows.slice(k)
+    if (median(zone.map(rowHeight)) > bodyHeight * 0.88) continue
+    const gaps: number[] = []
+    for (let i = 1; i < k; i++) gaps.push(rows[i].y0 - rows[i - 1].y1)
+    const lineGap = gaps.length >= 2 ? Math.max(0, lowerMedian(gaps)) : bodyHeight * 0.5
+    const apart = (i: number) => rows[i].y0 - rows[i - 1].y1 >= Math.max(lineGap * 2, bodyHeight * 0.9)
+    // 往上带上前面的注释：字同样小的续行，或者带编号的行（编号的括号常被识别得很高，行高不准）
+    let start = k
+    while (
+      start > 2 &&
+      !apart(start) &&
+      rows[start - 1].y0 >= pageHeight * 0.3 &&
+      (small(rows[start - 1]) || isNoteStart(rows[start - 1].text))
+    )
+      start--
+    const marked = zone.filter(r => isNoteStart(r.text, true)).length
+    if (!apart(start) && (marked < 2 || marked * 2 < zone.length)) continue
+    const noteRows = rows.slice(start)
+    const drop = new Set(noteRows.flatMap(r => r.lines))
+    // 去掉脚注后重新分段（脚注的字小、行短，会影响正文的左右边界）
+    const kept = assignParagraphs(lines.filter(l => !drop.has(l)))
+    return { body: kept, notes: noteRows.map(r => r.text) }
+  }
+  return { body: lines, notes: [] }
 }
 
 /** 把行按段落拼回文字：段内换行，段落之间空一行（交给 ocrTextToParagraphs 整理） */

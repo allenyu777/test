@@ -938,6 +938,24 @@ a {
   margin-bottom: 0.9em;
 }
 
+.reader-content p.fn {
+  font-size: 0.8em;
+  line-height: 1.6;
+  color: var(--text-2);
+  text-indent: 0;
+  margin-bottom: 0.4em;
+}
+
+/* 一页的第一条脚注上面画一条短线，像书上一样 */
+.reader-content p:not(.fn) + p.fn::before {
+  content: '';
+  display: block;
+  width: 6em;
+  margin: 1em 0 0.6em;
+  border-top: 1px solid var(--text-2);
+  opacity: 0.4;
+}
+
 .reader-content p.h {
   text-indent: 0;
   text-align: center;
