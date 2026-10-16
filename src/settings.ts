@@ -42,6 +42,9 @@ export interface Settings {
   readNotes: boolean
   /** 朗读目录页、版权页、图表说明和表格（关闭时只显示，不朗读） */
   readExtras: boolean
+  /** 后退、快进按钮一次跳过的秒数 */
+  skipBack: number
+  skipForward: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -70,6 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   perBookRate: true,
   readNotes: false,
   readExtras: false,
+  skipBack: 10,
+  skipForward: 15,
 }
 
 const KEY = 'tingshu.settings.v1'

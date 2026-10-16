@@ -1,7 +1,7 @@
 // 播放控制：把书、朗读引擎、进度保存、锁屏控件、定时关闭串起来
 import { Book, type Pos } from './core/book'
 import { trackListening } from './stats'
-import { cjkRatio, isSpeakable, speechText } from './core/text'
+import { charsForSeconds, cjkRatio, isSpeakable, speechText } from './core/text'
 import * as db from './db'
 import type { BookMeta, ChapterMark } from './db'
 import { coverUrl, library, patchBookLocal } from './library'
@@ -241,6 +241,21 @@ class Player {
       if (this.state.status === 'playing') this.setStatus('paused')
     }
     this.saveNow()
+  }
+
+  /** 后退 / 快进若干秒（按当前语速估算字数，跳到那一句） */
+  skipSeconds(seconds: number) {
+    const book = this.book
+    if (!book || !this.meta) return
+    const chars = charsForSeconds(Math.abs(seconds), this.meta.lang, this.state.rate) * Math.sign(seconds)
+    const p = book.skipChars(this.state.pos, chars)
+    if (p) this.seek(p)
+  }
+
+  /** 设置里的后退 / 快进秒数 */
+  skipBy(direction: 1 | -1) {
+    const s = settings.get()
+    this.skipSeconds(direction > 0 ? s.skipForward : -s.skipBack)
   }
 
   skip(direction: 1 | -1) {
@@ -732,8 +747,8 @@ class Player {
       ['stop', () => this.pause()],
       ['previoustrack', () => this.skip(-1)],
       ['nexttrack', () => this.skip(1)],
-      ['seekbackward', () => this.skip(-1)],
-      ['seekforward', () => this.skip(1)],
+      ['seekbackward', () => this.skipBy(-1)],
+      ['seekforward', () => this.skipBy(1)],
     ]
     for (const [action, fn] of handlers) {
       try {
