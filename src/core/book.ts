@@ -29,6 +29,8 @@ export interface ParsedBook {
   blocks: string[]
   /** 段落序号 → 标题级别（1-6） */
   heads: Record<number, number>
+  /** 脚注、注释段落的序号（显示，但默认不朗读） */
+  notes?: number[]
   toc: TocEntry[]
   cover?: Blob | null
 }
@@ -41,23 +43,27 @@ export interface BookContent {
   sections: SectionRange[]
   /** PDF：每一页第一个段落的序号（扫描版逐页识别时使用） */
   pages?: number[]
+  /** 脚注、注释段落的序号（从小到大；显示，但默认不朗读） */
+  notes?: number[]
 }
 
 export class BookBuilder {
   blocks: string[] = []
   heads: Record<number, number> = {}
+  notes: number[] = []
 
   get length() {
     return this.blocks.length
   }
 
-  /** 添加一个段落，返回其序号；空段落返回 -1 */
-  add(raw: string, head?: number): number {
+  /** 添加一个段落，返回其序号；空段落返回 -1。note：脚注 */
+  add(raw: string, head?: number, note = false): number {
     const text = normalizeText(raw)
     if (!text) return -1
     const index = this.blocks.length
     this.blocks.push(text)
     if (head) this.heads[index] = head
+    if (note) this.notes.push(index)
     return index
   }
 }
@@ -144,7 +150,7 @@ export function finalizeBook(id: string, parsed: ParsedBook): BookContent {
   let toc = finalizeToc(blocks, heads, parsed.toc)
   const sections = buildSections(blocks, toc)
   if (!toc.length && sections.length > 1) toc = syntheticToc(blocks, sections)
-  return { id, blocks, heads, toc, sections }
+  return { id, blocks, heads, toc, sections, ...(parsed.notes?.length ? { notes: parsed.notes } : {}) }
 }
 
 /** 运行时的书籍对象：提供位置换算、分句缓存、前后句导航 */
@@ -154,6 +160,10 @@ export class Book {
   sections!: SectionRange[]
   heads!: Record<number, number>
   pages?: number[]
+  /** 脚注段落 */
+  noteBlocks: Set<number> = new Set()
+  /** 朗读时跳过脚注 */
+  skipNotes = true
   /** cum[i] = 第 i 段之前的总字数 */
   cum!: Float64Array
   totalChars!: number
@@ -170,6 +180,10 @@ export class Book {
   replace(content: BookContent) {
     // 以累计字数表的长度为准（调用方可能已经往同一个数组里追加了段落）
     const oldLength = this.cum ? this.cum.length - 1 : 0
+    // 末尾是上一页的脚注时，跨页接上的半句话加在脚注前面那一段
+    let lastBody = oldLength - 1
+    while (lastBody > 0 && this.noteBlocks.has(lastBody)) lastBody--
+    this.noteBlocks = new Set(content.notes)
     this.blocks = content.blocks
     this.toc = content.toc
     this.sections = content.sections
@@ -177,7 +191,7 @@ export class Book {
     this.pages = content.pages
     const cum = new Float64Array(this.blocks.length + 1)
     // 识别下一页时，可能把跨页的句子接到原来最后一段后面，所以最后一段也重新计算
-    const keep = this.cum && oldLength <= this.blocks.length ? Math.max(0, oldLength - 1) : 0
+    const keep = this.cum && oldLength <= this.blocks.length ? Math.max(0, lastBody) : 0
     if (keep) cum.set(this.cum.subarray(0, keep + 1))
     for (let i = keep; i < this.blocks.length; i++) cum[i + 1] = cum[i] + this.blocks[i].length
     for (const b of [...this.cache.keys()]) if (b >= keep) this.cache.delete(b)
@@ -197,6 +211,15 @@ export class Book {
       else hi = mid - 1
     }
     return lo + 1
+  }
+
+  isNote(b: number): boolean {
+    return this.noteBlocks.has(b)
+  }
+
+  /** 朗读时跳过的段落 */
+  private skipped(b: number): boolean {
+    return this.skipNotes && this.noteBlocks.has(b)
   }
 
   sentences(b: number): Sentence[] {
@@ -245,7 +268,9 @@ export class Book {
     for (;;) {
       while (i < list.length) {
         const s = list[i]
-        if (!speakableOnly || isSpeakable(this.blocks[b].slice(s.o, s.e))) return { b, o: s.o }
+        if (!speakableOnly) return { b, o: s.o }
+        if (this.skipped(b)) break
+        if (isSpeakable(this.blocks[b].slice(s.o, s.e))) return { b, o: s.o }
         i++
       }
       b++
@@ -260,7 +285,7 @@ export class Book {
     let i = this.sentenceIndex(pos) - 1
     for (;;) {
       const list = this.sentences(b)
-      while (i >= 0) {
+      while (i >= 0 && !this.skipped(b)) {
         const s = list[i]
         if (isSpeakable(this.blocks[b].slice(s.o, s.e))) return { b, o: s.o }
         i--
@@ -275,7 +300,7 @@ export class Book {
   speakableFrom(pos: Pos): Pos | null {
     const p = this.clamp(pos)
     const text = this.sentenceText(p)
-    return isSpeakable(text) ? p : this.next(p)
+    return isSpeakable(text) && !this.skipped(p.b) ? p : this.next(p)
   }
 
   charOffset(pos: Pos): number {

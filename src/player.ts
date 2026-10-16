@@ -62,7 +62,7 @@ export function createSource(book: Book, from: Pos, maxChars: number, stopAt: ()
       const limit = maxChars <= 0 ? 0 : first ? Math.min(maxChars, 60) : maxChars
       while (pos && (limitBlock == null || pos.b < limitBlock)) {
         const raw = book.sentenceText(pos)
-        const t = speechText(raw)
+        const t = speechText(raw, book.skipNotes)
         if (sentences.length && (limit === 0 || text.length + t.length > limit)) break
         // 读不出来而跳过的句子（例如只有网址）也记下，续读时从它后面接着
         last = { pos, len: raw.length }
@@ -117,6 +117,9 @@ class Player {
     window.addEventListener('pagehide', () => this.saveNow())
     this.setupMediaSession()
     ocrRunner.onExtended(id => this.onBookExtended(id))
+    settings.subscribe(() => {
+      if (this.book) this.book.skipNotes = !settings.get().readNotes
+    })
     loadSystemVoices().then(() => {
       // 语音列表加载后，重新确认当前书的声音
       if (this.meta && this.store.get().status === 'idle') {
@@ -141,6 +144,7 @@ class Player {
     this.source = null
     this.meta = meta
     this.book = book
+    book.skipNotes = !settings.get().readNotes
     const pos = book.clamp(meta.pos)
     const s = settings.get()
     const rate = (s.perBookRate && meta.rate) || s.rate

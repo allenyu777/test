@@ -17,7 +17,8 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
-import { dropMarginLines, linesToText } from './layout'
+import { dropMarginLines, linesToText, splitFootnotes } from './layout'
+import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
   continuesAcrossPage,
   edgeKeys,
@@ -30,6 +31,12 @@ import {
 } from './text'
 
 type Listener = (bookId: string) => void
+
+/** 识别出的一页：正文段落和页面下方的脚注 */
+interface RecognizedPage {
+  paragraphs: string[]
+  notes: string[]
+}
 
 /**
  * 根据已识别的段落重新生成目录和分段：
@@ -88,14 +95,24 @@ export function applyOutlineTitles(paragraphs: string[], titles: string[]): stri
 }
 
 /**
- * 把识别出的一页加到正文末尾。
- * 上一页最后一句话没说完时，和这一页的第一段接成一段（不然朗读会在句子中间停顿）。
+ * 把识别出的一页加到正文末尾，脚注放在这一页正文的后面（显示，不朗读）。
+ * 上一页最后一句话没说完时，和这一页的第一段接成一段（不然朗读会在句子中间停顿）；
+ * 上一页末尾有脚注时，接到脚注前面的那一段。
  * titles：书签指向这一页的标题，不和上一页接起来；joinable：上一页是正文（空白页、插图页之后不接）。
  */
-export function appendPage(content: BookContent, page: number, paragraphs: string[], titles: string[] = [], joinable = true) {
+export function appendPage(
+  content: BookContent,
+  page: number,
+  paragraphs: string[],
+  titles: string[] = [],
+  joinable = true,
+  notes: string[] = [],
+) {
   content.pages ??= []
   const rest = paragraphs.slice()
-  const last = content.blocks.length - 1
+  const noteSet = new Set(content.notes)
+  let last = content.blocks.length - 1
+  while (last >= 0 && noteSet.has(last)) last--
   if (
     joinable &&
     rest.length &&
@@ -109,6 +126,10 @@ export function appendPage(content: BookContent, page: number, paragraphs: strin
   // 指向这一页上开始的第一段（接上去的半句话算上一页的段落）
   content.pages[page] = content.blocks.length
   content.blocks.push(...rest)
+  if (notes.length) {
+    content.notes ??= []
+    for (const note of notes) content.notes.push(content.blocks.push(note) - 1)
+  }
 }
 
 // 识别失败后的重试间隔
@@ -279,15 +300,17 @@ class OcrRunner {
         }
         options.onPage?.(p, ocr.pages)
 
-        const raw = await this.recognizeWithRetry(id, pdf, p, ocr, repeated)
-        if (!raw) return
+        const recognized = await this.recognizeWithRetry(id, pdf, p, ocr, repeated)
+        if (!recognized) return
+        const raw = recognized.paragraphs
+        const notes = recognized.notes.map(t => normalizeText(t)).filter(Boolean)
         const titles = outline.filter(item => item.page === p).map(item => item.title)
         const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges.flat(), titles), titles)
           .map(t => normalizeText(t))
           .filter(Boolean)
         edges = [edgeKeys(raw), ...edges].slice(0, 4)
         const plate = isPlatePage(paragraphs)
-        appendPage(content, p, paragraphs, titles, prevIsText && !plate)
+        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes)
         prevIsText = paragraphs.length > 0 && !plate
         rebuildOcrContent(content, outline)
 
@@ -343,14 +366,15 @@ class OcrRunner {
     }, 5 * 60_000)
   }
 
-  private async recognizePage(pdf: PdfDocument, index: number, ocr: OcrInfo, ignore: Set<string>): Promise<string[]> {
+  private async recognizePage(pdf: PdfDocument, index: number, ocr: OcrInfo, ignore: Set<string>): Promise<RecognizedPage> {
     // 这一页本身有文字层（扫描版里夹着的文字页）就直接用
-    const text = await pageParagraphs(pdf, index, ignore)
+    const page = await pageParagraphs(pdf, index, ignore)
+    const text = page.paragraphs
     const joined = text.join('\n')
     if (joined.length >= 20 && !isGarbled(joined)) {
       while (text.length && isPageNumber(text[0])) text.shift()
       while (text.length && isPageNumber(text[text.length - 1])) text.pop()
-      return text
+      return page
     }
     if (ocr.engine === 'cloud' && typeof navigator !== 'undefined' && navigator.onLine === false) {
       throw new Error('云端识别：没有网络，联网后会自动继续')
@@ -359,8 +383,13 @@ class OcrRunner {
     try {
       const pageHeight = canvas.height
       const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
-      // 本机识别有每一行的位置：先按位置去掉页眉页脚
-      return ocrTextToParagraphs(result.lines ? linesToText(dropMarginLines(result.lines, pageHeight)) : result.text)
+      // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
+      if (result.lines) {
+        const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight)
+        return { paragraphs: ocrTextToParagraphs(linesToText(body)), notes: ocrTextToParagraphs(notesToText(notes)) }
+      }
+      const { body, notes } = splitTrailingNotes(ocrTextToParagraphs(result.text))
+      return { paragraphs: body, notes }
     } finally {
       // 及时释放画布内存（iOS 对画布总内存有限制）
       canvas.width = 0

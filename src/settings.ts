@@ -38,6 +38,8 @@ export interface Settings {
   libraryView: 'grid' | 'list'
   /** 语速调节记忆到每本书 */
   perBookRate: boolean
+  /** 朗读脚注和正文里的注释编号（关闭时只显示，不朗读） */
+  readNotes: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -64,6 +66,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sort: 'recent',
   libraryView: 'grid',
   perBookRate: true,
+  readNotes: false,
 }
 
 const KEY = 'tingshu.settings.v1'

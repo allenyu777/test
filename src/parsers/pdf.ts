@@ -4,6 +4,7 @@ import { chapterLevel } from '../core/chapters'
 import { cjkRatio, detectLang, isCjkChar } from '../core/text'
 import type { OcrLang } from '../db'
 import { garbleRatio, guessOcrLang, isGarbled } from './garble'
+import { isNoteStart, notesToText } from './notes'
 import { titleFromFileName } from './txt'
 import type { Progress } from './foliate'
 
@@ -33,6 +34,9 @@ function needsSpace(a: string, b: string): boolean {
   return !isCjkChar(last) && !isCjkChar(first)
 }
 
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
+const SUPERSCRIPT_REF = /^\s*[\[〔［(（]?\s*\d{1,3}\s*[\]〕］)）]?\s*$|^\s*[①-⑳*]\s*$/
+
 /** 把 pdf.js 的文字片段合并成行 */
 export function groupLines(items: TextItemLike[]): Line[] {
   const lines: Line[] = []
@@ -48,6 +52,12 @@ export function groupLines(items: TextItemLike[]): Line[] {
     if (typeof item.str !== 'string') continue
     const [, , c, d, e, f] = item.transform
     const size = Math.hypot(c, d) || item.height || 10
+    // 正文里上标的注释编号显示成上标数字（"伤稼"⁷"），朗读时跳过
+    if (cur && size < cur.size * 0.8 && f > cur.y && f - cur.y < cur.size && SUPERSCRIPT_REF.test(item.str)) {
+      cur.text += item.str.replace(/[^\d①-⑳*]/g, '').replace(/\d/g, d => SUPERSCRIPT_DIGITS[+d])
+      cur.right = Math.max(cur.right, e + (item.width || 0))
+      continue
+    }
     if (cur && Math.abs(f - cur.y) > Math.max(size, cur.size) * 0.5) push()
     if (!cur) cur = { text: '', x: e, right: e, y: f, size }
     else {
@@ -121,6 +131,30 @@ export function stripHeadersFooters(pages: Line[][]): Line[][] {
   )
 }
 
+/**
+ * 页面下方脚注开始的那一行（没有脚注返回 lines.length）：从这一行起到页底，字号都比上面的正文小，
+ * 开头一行带注释编号（〔1〕 [1] ① 1 等），位置在页面下半部分。
+ */
+export function footnoteStart(lines: Line[]): number {
+  if (lines.length < 3) return lines.length
+  const top = Math.max(...lines.map(l => l.y))
+  const bottom = Math.min(...lines.map(l => l.y))
+  const fullWidth = Math.max(...lines.map(l => l.right - l.x))
+  for (let k = 2; k < lines.length; k++) {
+    // PDF 的坐标从下往上
+    if (lines[k].y > bottom + (top - bottom) * 0.6) continue
+    // 上面要有正文（至少两行写满的），不是只有章节标题
+    const body = lines.slice(0, k).filter(l => l.right - l.x >= fullWidth * 0.7)
+    if (body.length < 2) continue
+    const bodySize = median(body.map(l => l.size))
+    const small = (l: Line) => l.size <= bodySize * 0.92 || PAGE_NUMBER.test(l.text)
+    if (lines[k].size > bodySize * 0.92 || !isNoteStart(lines[k].text, true)) continue
+    if (!lines.slice(k).every(small)) continue
+    return k
+  }
+  return lines.length
+}
+
 /** 按行距、缩进、句末标点合并成段落；返回段落和每页起始段落序号 */
 export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number[] {
   const all = pages.flat()
@@ -131,6 +165,8 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
   const pageStarts: number[] = []
   let para = ''
   let paraHead = false
+  // 上一页的脚注：等跨页的那一段结束后再放
+  let pendingNotes: string[] = []
 
   const join = (a: string, b: string) => {
     if (!a) return b
@@ -142,11 +178,15 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
     if (para) builder.add(para, paraHead ? 2 : undefined)
     para = ''
     paraHead = false
+    for (const note of pendingNotes) builder.add(note, undefined, true)
+    pendingNotes = []
   }
 
   let prevLine: Line | null = null
-  for (const lines of pages) {
+  for (const all of pages) {
     pageStarts.push(builder.length)
+    const split = footnoteStart(all)
+    const lines = all.slice(0, split)
     const left = lines.length ? Math.min(...lines.map(l => l.x)) : 0
     const gaps: number[] = []
     for (let i = 1; i < lines.length; i++) {
@@ -171,6 +211,10 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
       if (isHeading) paraHead = true
       prevLine = line
     })
+    if (split < all.length) {
+      const notes = notesToText(all.slice(split).filter(l => !PAGE_NUMBER.test(l.text)).map(l => l.text))
+      pendingNotes.push(...notes.split('\n\n').map(n => n.split('\n').reduce((a, b) => join(a, b), '')))
+    }
   }
   flush()
   return pageStarts
@@ -247,15 +291,16 @@ export async function sampleRepeatedLines(pdf: PdfDocument): Promise<Set<string>
   return repeatedLineKeys(pages)
 }
 
-/** 读取某一页的文字层（页码从 0 开始），按段落返回；页面首尾属于 ignore 的重复行会被去掉 */
-export async function pageParagraphs(pdf: PdfDocument, index: number, ignore?: Set<string>): Promise<string[]> {
+/** 读取某一页的文字层（页码从 0 开始），按段落返回正文和脚注；页面首尾属于 ignore 的重复行会被去掉 */
+export async function pageParagraphs(pdf: PdfDocument, index: number, ignore?: Set<string>): Promise<{ paragraphs: string[]; notes: string[] }> {
   const page = await pdf.getPage(index + 1)
   try {
     const content = await page.getTextContent()
     const builder = new BookBuilder()
     const lines = dropRepeatedLines(groupLines(content.items as TextItemLike[]), ignore)
     linesToParagraphs(stripHeadersFooters([lines]), builder)
-    return builder.blocks
+    const notes = new Set(builder.notes)
+    return { paragraphs: builder.blocks.filter((_, i) => !notes.has(i)), notes: builder.blocks.filter((_, i) => notes.has(i)) }
   } finally {
     page.cleanup()
   }
@@ -367,6 +412,7 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
       lang: detectLang(builder.blocks.slice(0, 300).join('\n')),
       blocks: builder.blocks,
       heads: builder.heads,
+      notes: builder.notes,
       toc,
     }
   } finally {

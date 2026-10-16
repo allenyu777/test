@@ -19,6 +19,7 @@ export function parseHtml(bytes: Uint8Array, fileName: string): ParsedBook {
     lang: doc.documentElement.getAttribute('lang') || detectLang(builder.blocks.slice(0, 300).join('\n')),
     blocks: builder.blocks,
     heads: builder.heads,
+    notes: builder.notes,
     toc: [],
   }
 }

@@ -207,6 +207,9 @@ export function SettingsPage() {
         <Row title="锁屏继续朗读（实验）" desc="系统语音朗读时在后台播放静音音频，尝试保持锁屏后继续；若出现无声请关闭">
           <Switch on={s.keepAlive} onChange={v => updateSettings({ keepAlive: v })} />
         </Row>
+        <Row title="朗读脚注" desc="页面下方的注释和正文里的〔1〕①等编号。关闭时屏幕上照常显示，朗读时跳过">
+          <Switch on={s.readNotes} onChange={v => updateSettings({ readNotes: v })} />
+        </Row>
         <Row title="每本书单独记住语速">
           <Switch on={s.perBookRate} onChange={v => updateSettings({ perBookRate: v })} />
         </Row>

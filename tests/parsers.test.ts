@@ -108,20 +108,23 @@ describe('EPUB', () => {
     expect(parsed.lang).toBe('zh-CN')
     expect(parsed.blocks).toEqual([
       '第一章 开端',
-      '春天来了，燕子飞回来了。小草也绿了。',
+      // 注释编号显示成上标、脚注显示成小字，朗读时都跳过
+      '春天来了，燕子飞回来了。¹小草也绿了。',
       '第二段文字。',
       '第二节 转折',
       '天气突然变冷了。',
       '大家都穿上了棉衣。',
+      '这是一个脚注。',
       '第二章 结局',
       '故事结束了。',
     ])
+    expect(parsed.notes).toEqual([6])
     expect(parsed.heads[0]).toBe(1)
     expect(parsed.heads[3]).toBe(2)
     expect(parsed.toc).toEqual([
       { title: '第一章 开端', b: 0, level: 0 },
       { title: '第二节 转折', b: 3, level: 1 },
-      { title: '第二章 结局', b: 6, level: 0 },
+      { title: '第二章 结局', b: 7, level: 0 },
     ])
     const book = new Book(finalizeBook('e1', parsed))
     expect(book.chapterTitle(4)).toBe('第二节 转折')
