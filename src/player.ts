@@ -118,7 +118,9 @@ class Player {
     this.setupMediaSession()
     ocrRunner.onExtended(id => this.onBookExtended(id))
     settings.subscribe(() => {
-      if (this.book) this.book.skipNotes = !settings.get().readNotes
+      if (!this.book) return
+      this.book.skipNotes = !settings.get().readNotes
+      this.book.skipQuiet = !settings.get().readExtras
     })
     loadSystemVoices().then(() => {
       // 语音列表加载后，重新确认当前书的声音
@@ -145,6 +147,7 @@ class Player {
     this.meta = meta
     this.book = book
     book.skipNotes = !settings.get().readNotes
+    book.skipQuiet = !settings.get().readExtras
     const pos = book.clamp(meta.pos)
     const s = settings.get()
     const rate = (s.perBookRate && meta.rate) || s.rate
@@ -241,6 +244,13 @@ class Player {
   skip(direction: 1 | -1) {
     if (!this.book) return
     const p = direction > 0 ? this.book.next(this.state.pos) : this.book.prev(this.state.pos)
+    if (p) this.seek(p)
+  }
+
+  /** 跳过正在读的这一段，从下一段开始 */
+  skipParagraph() {
+    if (!this.book) return
+    const p = this.book.next({ b: this.state.pos.b, o: Number.MAX_SAFE_INTEGER })
     if (p) this.seek(p)
   }
 

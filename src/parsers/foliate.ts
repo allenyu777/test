@@ -127,6 +127,7 @@ export async function extractFoliateBook(
     blocks: builder.blocks,
     heads: builder.heads,
     notes: builder.notes,
+    quiet: builder.quiet,
     toc: toc.map(({ title, b, level }) => ({ title, b, level })),
     cover,
   }

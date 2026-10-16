@@ -13,6 +13,8 @@ const SKIP_TAGS = new Set([
   'video', 'audio', 'button', 'input', 'select', 'textarea', 'img', 'image', 'link', 'meta',
 ])
 
+const QUIET_TAGS = new Set(['table', 'figcaption', 'caption'])
+
 const OPS_NS = 'http://www.idpf.org/2007/ops'
 const NOTE_BODY_TYPES = /\b(footnotes?|endnotes?|rearnotes?|doc-footnote|doc-endnotes?)\b/
 const NOTE_REF_TYPES = /\b(noteref|doc-noteref)\b/
@@ -48,10 +50,12 @@ export function extractBlocks(root: Node, builder: BookBuilder, marks?: Map<Elem
   let head = 0
   let pre = 0
   let note = 0
+  // 表格、图片说明：显示，朗读时跳过
+  let quiet = 0
 
   const flush = () => {
     if (buf) {
-      builder.add(buf, head || undefined, note > 0)
+      builder.add(buf, head || undefined, note > 0 ? 'note' : quiet > 0 ? 'quiet' : undefined)
       buf = ''
     }
   }
@@ -98,9 +102,12 @@ export function extractBlocks(root: Node, builder: BookBuilder, marks?: Map<Elem
     const prevHead = head
     if (/^h[1-6]$/.test(tag)) head = Number(tag[1])
     if (tag === 'pre') pre++
+    const isQuiet = QUIET_TAGS.has(tag)
+    if (isQuiet) quiet++
     for (let c = el.firstChild; c; c = c.nextSibling) walk(c)
     if (tag === 'pre') pre--
     if (isBlock) flush()
+    if (isQuiet) quiet--
     head = prevHead
   }
 

@@ -1,6 +1,7 @@
 // 扫描版 PDF 的后台识别：逐页识别、逐页保存，识别完一页就能接着听
 import { buildSections, type BookContent, type TocEntry } from '../core/book'
 import { detectChapters } from '../core/chapters'
+import { findQuietBlocks } from '../core/quiet'
 import { normalizeText } from '../core/text'
 import * as db from '../db'
 import type { OcrInfo } from '../db'
@@ -59,7 +60,11 @@ export function rebuildOcrContent(content: BookContent, outline: OutlineItem[] =
     }
     fromOutline.push({ title: item.title, b, level: item.level })
   }
-  const hits = fromOutline.length ? [] : detectChapters(content.blocks)
+  // 目录页、版权页、图表说明：只看不听，也不当作章节标题
+  const quiet = findQuietBlocks(content.blocks, content.notes)
+  if (quiet.length) content.quiet = quiet
+  else delete content.quiet
+  const hits = fromOutline.length ? [] : detectChapters(content.blocks, new Set([...(content.notes ?? []), ...quiet]))
   content.heads = {}
   for (const h of hits) content.heads[h.index] = h.level + 2
   // 书签标题正好是某个段落时，按标题样式显示

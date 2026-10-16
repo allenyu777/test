@@ -18,6 +18,8 @@
 - **分书记忆进度**：每本书单独显示进度百分比、当前章节、最近收听时间；可以随时切换着听不同的书
 - **分章记忆位置**：每一章都记住上次读到哪里。点错跳到别的章节，再点回原来那一章，会接着刚才的位置读；目录里读过一部分的章节显示「读到 x%」，旁边的「从头」可以从这一章开头读；完整听完的章节下次从头读
 - **脚注只看不听**：书页下方的注释（〔1〕 民国《临县志》……）和正文里的注释编号（〔7〕、①、上标数字）在屏幕上照常显示（脚注用小字），朗读时自动跳过，跨页的句子也不会被脚注打断；扫描版、文字版 PDF 和 EPUB/MOBI 都支持。想听注释可以在设置里打开「朗读脚注」
+- **目录页、版权页、图表只看不听**：书前印的目录页、版权页（ISBN、定价、责任编辑……）、图表标题、表格里的数字和资料来源用灰色显示，朗读时跳过；印出来的目录也不会被误当成章节。设置里可以打开「朗读目录、版权页和图表」
+- **跳过本段**：遇到不想听的内容（大段引文等），点播放栏的「跳过本段」直接从下一段开始
 - **快速定位**：正在朗读的句子高亮显示，自动翻页跟随；滚动走开后点「回到朗读位置」立即跳回
 - **读书笔记**：点任意句子 → 写笔记 / 录语音笔记；播放中可一键「语音笔记」；可选把录音自动转成文字
 - **导出**：笔记导出为 Markdown、纯文本，或连同录音打包为 ZIP；通过系统分享可存到「文件」、备忘录、微信等
@@ -72,6 +74,7 @@
 
 ## 更新记录
 
+- **v1.7**：目录页、版权页、图表说明和表格只显示不朗读；新书从第一章开始读；播放栏新增「跳过本段」
 - **v1.6**：脚注只显示、不朗读：页面下方的注释和正文里的注释编号听书时自动跳过，跨页的句子不再被脚注打断；设置里可打开「朗读脚注」
 - **v1.5**：iPhone 上导入时 MOBI、AZW3、FB2 文件不再是灰色、可以选中了；选错文件（照片、Word 等）或书有 DRM 加密时直接说明原因
 - **v1.4**：扫描版 PDF 改用 PaddleOCR 本机识别（同一页测试：原来错 12～16 个字，现在 0 个），简体繁体都很准，首次使用下载约 33 MB；按版面位置去掉页眉、页码（识别错了也能去掉），双栏页面按栏读；设备不支持时自动改用兼容模式
@@ -111,6 +114,7 @@ npm run build    # 生产构建，输出到 dist/
 
 - **Many formats**: EPUB, MOBI, AZW3, PDF, TXT (UTF-8 / GBK / Big5 detected automatically), FB2, DOCX, HTML, Markdown
 - **Footnotes are shown but not read aloud**: notes at the bottom of the page and note numbers in the text (〔7〕, ①, superscripts) stay on screen in small print but are skipped while listening, so sentences that run across a page aren't interrupted. Works for scanned and text PDFs and for EPUB/MOBI; turn on "Read footnotes" in Settings if you want them
+- **Contents pages, copyright pages, figures and tables are shown but not read**: printed contents and copyright pages, figure and table captions, table rows and source lines appear in grey and are skipped while listening (a Settings switch reads them anyway). "Skip paragraph" in the player jumps to the next paragraph
 - **Scanned and garbled PDFs**: on-device OCR with PaddleOCR models (simplified and traditional Chinese, English); a one-time download of about 33 MB, then works offline and uploads nothing. Falls back to Tesseract on devices that can't run it (before iOS 16.4). Running headers and page numbers are removed by their position on the page, two-column pages are read column by column, and sentences split across pages are joined. Pages are recognized in the background, so you can start listening after the first few. Optional cloud OCR through any OpenAI-compatible vision model
 - **Voices**
   - System voices: free and offline. iOS only exposes its built-in voices to web pages; an experimental "follow iPhone settings" option may use a downloaded higher-quality voice on some iOS versions

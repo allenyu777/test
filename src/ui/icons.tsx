@@ -56,6 +56,15 @@ export const IconFwd15 = make(
     <path d="M21 3v5h-5" />
   </>,
 )
+export const IconSkipPara = make(
+  <>
+    <path d="M4 6h11" />
+    <path d="M4 11h11" />
+    <path d="M4 16h6" />
+    <path d="M18 9v11" />
+    <path d="M14.5 16.5 18 20l3.5-3.5" />
+  </>,
+)
 export const IconList = make(
   <>
     <path d="M8 6h13" />

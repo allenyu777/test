@@ -1,5 +1,6 @@
 // 书籍内容模型：所有格式最终都转换成"段落数组 + 目录"
 import { detectChapters } from './chapters'
+import { findQuietBlocks } from './quiet'
 import { isSpeakable, normalizeText, splitSentences, type Sentence } from './text'
 
 /** 阅读位置：段落序号 + 句子在段落内的起始偏移 */
@@ -31,6 +32,8 @@ export interface ParsedBook {
   heads: Record<number, number>
   /** 脚注、注释段落的序号（显示，但默认不朗读） */
   notes?: number[]
+  /** 表格、图片说明等只看不听的段落（解析时就能确定的） */
+  quiet?: number[]
   toc: TocEntry[]
   cover?: Blob | null
 }
@@ -45,25 +48,29 @@ export interface BookContent {
   pages?: number[]
   /** 脚注、注释段落的序号（从小到大；显示，但默认不朗读） */
   notes?: number[]
+  /** 目录页、版权页、图表说明等只看不听的段落（从小到大） */
+  quiet?: number[]
 }
 
 export class BookBuilder {
   blocks: string[] = []
   heads: Record<number, number> = {}
   notes: number[] = []
+  quiet: number[] = []
 
   get length() {
     return this.blocks.length
   }
 
-  /** 添加一个段落，返回其序号；空段落返回 -1。note：脚注 */
-  add(raw: string, head?: number, note = false): number {
+  /** 添加一个段落，返回其序号；空段落返回 -1。kind：脚注 / 只看不听的段落（表格、图片说明） */
+  add(raw: string, head?: number, kind?: 'note' | 'quiet'): number {
     const text = normalizeText(raw)
     if (!text) return -1
     const index = this.blocks.length
     this.blocks.push(text)
     if (head) this.heads[index] = head
-    if (note) this.notes.push(index)
+    if (kind === 'note') this.notes.push(index)
+    else if (kind === 'quiet') this.quiet.push(index)
     return index
   }
 }
@@ -71,7 +78,7 @@ export class BookBuilder {
 const MAX_SECTION_CHARS = 12000
 
 /** 整理目录：排序、去重、补全；没有目录时从标题或正文里识别章节 */
-export function finalizeToc(blocks: string[], heads: Record<number, number>, toc: TocEntry[]): TocEntry[] {
+export function finalizeToc(blocks: string[], heads: Record<number, number>, toc: TocEntry[], skip?: Set<number>): TocEntry[] {
   const n = blocks.length
   let entries = toc
     .filter(t => t.b >= 0 && t.title.trim())
@@ -99,7 +106,7 @@ export function finalizeToc(blocks: string[], heads: Record<number, number>, toc
       .map(i => ({ title: blocks[i], b: i, level: heads[i] - minLevel }))
   }
   // 从正文识别"第X章"之类的标题
-  const hits = detectChapters(blocks)
+  const hits = detectChapters(blocks, skip)
   if (hits.length) {
     for (const h of hits) heads[h.index] = h.level + 2
     return hits.map(h => ({ title: blocks[h.index], b: h.index, level: h.level }))
@@ -147,10 +154,12 @@ function syntheticToc(blocks: string[], sections: SectionRange[]): TocEntry[] {
 export function finalizeBook(id: string, parsed: ParsedBook): BookContent {
   const { blocks, heads } = parsed
   if (!blocks.length) throw new Error('没有在文件中找到可以朗读的文字')
-  let toc = finalizeToc(blocks, heads, parsed.toc)
+  const notes = parsed.notes ?? []
+  const quiet = [...new Set([...(parsed.quiet ?? []), ...findQuietBlocks(blocks, notes)])].sort((a, b) => a - b)
+  let toc = finalizeToc(blocks, heads, parsed.toc, new Set([...notes, ...quiet]))
   const sections = buildSections(blocks, toc)
   if (!toc.length && sections.length > 1) toc = syntheticToc(blocks, sections)
-  return { id, blocks, heads, toc, sections, ...(parsed.notes?.length ? { notes: parsed.notes } : {}) }
+  return { id, blocks, heads, toc, sections, ...(notes.length ? { notes } : {}), ...(quiet.length ? { quiet } : {}) }
 }
 
 /** 运行时的书籍对象：提供位置换算、分句缓存、前后句导航 */
@@ -162,8 +171,12 @@ export class Book {
   pages?: number[]
   /** 脚注段落 */
   noteBlocks: Set<number> = new Set()
+  /** 目录页、版权页、图表说明等只看不听的段落 */
+  quietBlocks: Set<number> = new Set()
   /** 朗读时跳过脚注 */
   skipNotes = true
+  /** 朗读时跳过目录页、版权页、图表 */
+  skipQuiet = true
   /** cum[i] = 第 i 段之前的总字数 */
   cum!: Float64Array
   totalChars!: number
@@ -184,6 +197,7 @@ export class Book {
     let lastBody = oldLength - 1
     while (lastBody > 0 && this.noteBlocks.has(lastBody)) lastBody--
     this.noteBlocks = new Set(content.notes)
+    this.quietBlocks = new Set(content.quiet)
     this.blocks = content.blocks
     this.toc = content.toc
     this.sections = content.sections
@@ -217,9 +231,13 @@ export class Book {
     return this.noteBlocks.has(b)
   }
 
+  isQuiet(b: number): boolean {
+    return this.quietBlocks.has(b)
+  }
+
   /** 朗读时跳过的段落 */
-  private skipped(b: number): boolean {
-    return this.skipNotes && this.noteBlocks.has(b)
+  skipped(b: number): boolean {
+    return (this.skipNotes && this.noteBlocks.has(b)) || (this.skipQuiet && this.quietBlocks.has(b))
   }
 
   sentences(b: number): Sentence[] {

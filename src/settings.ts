@@ -40,6 +40,8 @@ export interface Settings {
   perBookRate: boolean
   /** 朗读脚注和正文里的注释编号（关闭时只显示，不朗读） */
   readNotes: boolean
+  /** 朗读目录页、版权页、图表说明和表格（关闭时只显示，不朗读） */
+  readExtras: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   libraryView: 'grid',
   perBookRate: true,
   readNotes: false,
+  readExtras: false,
 }
 
 const KEY = 'tingshu.settings.v1'
