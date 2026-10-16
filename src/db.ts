@@ -72,6 +72,8 @@ export interface Note {
   audioId?: string
   audioType?: string
   audioDuration?: number
+  /** 划线 / 书签（没有表示笔记） */
+  kind?: 'highlight' | 'bookmark'
 }
 
 export interface AudioRecord {

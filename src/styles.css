@@ -1081,6 +1081,125 @@ a {
 }
 
 /* 句子操作气泡 */
+.s.hl {
+  background: linear-gradient(transparent 58%, rgba(232, 160, 40, 0.38) 58%);
+}
+
+.bm-mark {
+  display: inline-block;
+  margin-right: 2px;
+  color: var(--accent);
+  vertical-align: -1px;
+}
+
+.icon.accent {
+  color: var(--accent);
+}
+
+.note-card.highlight .note-quote {
+  background: linear-gradient(transparent 58%, rgba(232, 160, 40, 0.3) 58%);
+}
+
+.stats-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin: 12px 0 4px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 14px;
+  text-align: left;
+}
+
+.stats-card b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stats-card .icon {
+  margin-left: auto;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.stats-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.stats-grid b {
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.stats-grid span {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.stats-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 140px;
+  padding-top: 6px;
+}
+
+.stats-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 4px;
+}
+
+.stats-bar .bar {
+  width: 100%;
+  max-width: 28px;
+  border-radius: 6px 6px 2px 2px;
+  background: var(--accent);
+}
+
+.stats-bar .v,
+.stats-bar .l {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.stats-books div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.stats-books .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footnote-text {
+  font-size: 16px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
 .popover {
   position: fixed;
   z-index: 40;
@@ -1099,7 +1218,7 @@ a {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  min-width: 56px;
+  min-width: 52px;
   padding: 8px 6px 6px;
   border-radius: 10px;
   font-size: 11px;

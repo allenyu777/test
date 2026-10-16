@@ -1,6 +1,7 @@
 // 书籍内容模型：所有格式最终都转换成"段落数组 + 目录"
 import { detectChapters } from './chapters'
 import { findQuietBlocks } from './quiet'
+import { noteNumber } from '../parsers/notes'
 import { isSpeakable, normalizeText, splitSentences, type Sentence } from './text'
 
 /** 阅读位置：段落序号 + 句子在段落内的起始偏移 */
@@ -229,6 +230,18 @@ export class Book {
 
   isNote(b: number): boolean {
     return this.noteBlocks.has(b)
+  }
+
+  /**
+   * 正文第 b 段里编号为 n 的注释：先找后面最近的编号相同的脚注（同一页的脚注、章末注），
+   * 没有再往前找。找不到返回 -1
+   */
+  findNote(b: number, n: number): number {
+    const notes = [...this.noteBlocks].sort((x, y) => x - y)
+    const after = notes.find(i => i > b && noteNumber(this.blocks[i]) === n)
+    if (after != null) return after
+    for (let k = notes.length - 1; k >= 0; k--) if (notes[k] < b && noteNumber(this.blocks[notes[k]]) === n) return notes[k]
+    return -1
   }
 
   isQuiet(b: number): boolean {

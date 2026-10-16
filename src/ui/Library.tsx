@@ -6,6 +6,7 @@ import { importFiles, library, loadBook, removeBook, updateBookMeta } from '../l
 import { buildNotesFile } from '../notes/export'
 import { ACCEPT, FORMAT_LABELS } from '../parsers'
 import { isIOS } from '../tts/voices'
+import { StatsCard } from './Stats'
 import { UpdateBanner } from './UpdateBanner'
 import { createScannedBook, type ScanChoice } from '../ocr/importScanned'
 import type { ScannedPdfError } from '../parsers/pdf'
@@ -205,6 +206,7 @@ export function Library() {
       </div>
       <h1 class="large-title">书架</h1>
       {books.length > 0 && <div class="muted small">共 {books.length} 本 · 点书本打开，点 ▶ 直接听</div>}
+      <StatsCard books={books} />
 
       {hero && (
         <div class="hero">

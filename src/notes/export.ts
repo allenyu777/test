@@ -45,9 +45,9 @@ export function bookNotesMarkdown(book: BookMeta, notes: Note[], options: Export
       chapter = n.chapter
       lines.push('', `## ${chapter || '正文'}`)
     }
-    lines.push('', quoteLines(n.quote, '> '))
+    lines.push('', n.kind === 'bookmark' ? `🔖 书签：${n.quote}` : quoteLines(n.quote, '> '))
     if (n.text.trim()) lines.push('', n.text.trim())
-    const extra: string[] = [formatDate(n.createdAt)]
+    const extra: string[] = [...(n.kind === 'highlight' ? ['划线'] : []), formatDate(n.createdAt)]
     if (n.audioId) {
       const path = options.audioPaths?.get(n.audioId)
       const label = `语音笔记 ${formatClock(n.audioDuration ?? 0)}`
@@ -69,9 +69,9 @@ export function bookNotesText(book: BookMeta, notes: Note[]): string {
       chapter = n.chapter
       lines.push('', `【${chapter || '正文'}】`, '')
     }
-    lines.push(`「${n.quote}」`)
+    lines.push(n.kind === 'bookmark' ? `🔖 书签：${n.quote}` : `「${n.quote}」`)
     if (n.text.trim()) lines.push(n.text.trim())
-    const extra = [formatDate(n.createdAt)]
+    const extra = [...(n.kind === 'highlight' ? ['划线'] : []), formatDate(n.createdAt)]
     if (n.audioId) extra.push(`语音笔记 ${formatClock(n.audioDuration ?? 0)}`)
     lines.push(`—— ${extra.join(' · ')}`, '')
   }
