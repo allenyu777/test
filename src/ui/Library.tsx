@@ -6,6 +6,7 @@ import { importFiles, library, loadBook, removeBook, updateBookMeta } from '../l
 import { buildNotesFile } from '../notes/export'
 import { ACCEPT, FORMAT_LABELS } from '../parsers'
 import { isIOS } from '../tts/voices'
+import { UpdateBanner } from './UpdateBanner'
 import { createScannedBook, type ScanChoice } from '../ocr/importScanned'
 import type { ScannedPdfError } from '../parsers/pdf'
 import { ocrRunner } from '../ocr/runner'
@@ -193,6 +194,7 @@ export function Library() {
         onChange={e => onFiles((e.target as HTMLInputElement).files)}
       />
       <div class="topbar">
+        <UpdateBanner />
         <div class="spacer" />
         <button class="icon-btn" onClick={() => fileRef.current?.click()} aria-label="导入书籍">
           <IconPlus />

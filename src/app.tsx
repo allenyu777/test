@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect } from 'preact/hooks'
 import { settings } from './settings'
 import { useStore } from './store'
 import { Library } from './ui/Library'
@@ -29,11 +29,9 @@ function useTheme() {
   }, [theme])
 }
 
-export function App({ onUpdate }: { onUpdate: (cb: (apply: () => void) => void) => void }) {
+export function App() {
   const route = useRoute()
-  const [update, setUpdate] = useState<(() => void) | null>(null)
   useTheme()
-  useEffect(() => onUpdate(apply => setUpdate(() => apply)), [])
   useEffect(() => {
     if (route.name !== 'reader') window.scrollTo(0, 0)
   }, [route.name])
@@ -44,14 +42,6 @@ export function App({ onUpdate }: { onUpdate: (cb: (apply: () => void) => void) 
       {route.name === 'reader' && <Reader id={route.id} />}
       {route.name === 'settings' && <SettingsPage />}
       <Toasts />
-      {update && (
-        <div class="toasts" style={{ top: 'auto', bottom: 'calc(var(--safe-bottom) + 90px)' }}>
-          <div class="toast" onClick={update}>
-            <span>新版本已就绪</span>
-            <button>立即更新</button>
-          </div>
-        </div>
-      )}
     </>
   )
 }

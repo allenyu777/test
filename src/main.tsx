@@ -6,9 +6,8 @@ import { requestPersistence } from './db'
 import { refreshLibrary } from './library'
 import { ocrRunner } from './ocr/runner'
 import { toast } from './ui/toast'
+import { appUpdate } from './update'
 
-let notifyUpdate: ((apply: () => void) => void) | null = null
-let pendingUpdate: (() => void) | null = null
 // 只有用户点了"立即更新"才刷新页面（首次安装时 Service Worker 接管页面不应刷新）
 let updateRequested = false
 
@@ -23,8 +22,7 @@ function registerServiceWorker() {
           updateRequested = true
           worker.postMessage('skipWaiting')
         }
-        if (notifyUpdate) notifyUpdate(apply)
-        else pendingUpdate = apply
+        appUpdate.set({ apply })
       }
       if (reg.waiting) offer(reg.waiting)
       reg.addEventListener('updatefound', () => {
@@ -46,15 +44,7 @@ function registerServiceWorker() {
   })
 }
 
-render(
-  <App
-    onUpdate={cb => {
-      notifyUpdate = cb
-      if (pendingUpdate) cb(pendingUpdate)
-    }}
-  />,
-  document.getElementById('app')!,
-)
+render(<App />, document.getElementById('app')!)
 
 refreshLibrary()
   // 继续之前没识别完的扫描版 PDF
