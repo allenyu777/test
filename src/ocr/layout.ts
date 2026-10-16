@@ -1,5 +1,6 @@
 // 根据识别出的每一行在页面上的位置整理版面：拆开双栏、去掉页眉页脚（页码、书名、章节名）、分段
 import { isNoteStart } from '../parsers/notes'
+import type { RuleLine } from './rules'
 import { isPageNumber, withoutPageNumber } from './text'
 
 export interface OcrLine {
@@ -202,15 +203,37 @@ export function dropMarginLines(lines: OcrLine[], pageHeight: number): OcrLine[]
 }
 
 /**
- * 分出页面下方的脚注区。判断依据：从某一行起到页底，字比上面的正文小，
+ * 分出页面下方的脚注区。页面图片里找到了脚注线（rules）时，线下面带编号的各行就是脚注；
+ * 没有找到时的判断依据：从某一行起到页底，字比上面的正文小，
  * 开头一行带注释编号（〔1〕 [1] ① 1. 等），和正文之间隔着一段空白（脚注线）或者大多数行都带编号。
  * 上一页没写完的注释（没有编号、字同样小、紧挨着下面的注释）也一起去掉。
  */
-export function splitFootnotes(lines: OcrLine[], pageHeight: number): { body: OcrLine[]; notes: string[] } {
+export function splitFootnotes(lines: OcrLine[], pageHeight: number, rules: RuleLine[] = []): { body: OcrLine[]; notes: string[] } {
   const rows = toRows(lines)
   const rowHeight = (r: Row) => median(r.lines.map(height))
   const rowWidth = (r: Row) => Math.max(...r.lines.map(l => l.x1)) - Math.min(...r.lines.map(l => l.x0))
   const fullWidth = Math.max(0, ...rows.map(rowWidth))
+  const split = (start: number) => {
+    const noteRows = rows.slice(start)
+    const drop = new Set(noteRows.flatMap(r => r.lines))
+    // 去掉脚注后重新分段（脚注的字小、行短，会影响正文的左右边界）
+    return { body: assignParagraphs(lines.filter(l => !drop.has(l))), notes: noteRows.map(r => r.text) }
+  }
+
+  // 页面上有脚注线：线下面的就是脚注（线要靠左、比正文短，在两行之间的空白里）
+  if (rows.length >= 2) {
+    const left = Math.min(...rows.map(r => Math.min(...r.lines.map(l => l.x0))))
+    const lineHeight = median(rows.map(rowHeight))
+    for (const rule of rules) {
+      if (rule.y < pageHeight * 0.35) continue
+      if (rule.x0 > left + lineHeight * 1.5 || rule.x1 - rule.x0 > fullWidth * 0.6) continue
+      const k = rows.findIndex(r => r.y0 > rule.y)
+      if (k < 1 || rows[k - 1].y1 > rule.y) continue
+      const zone = rows.slice(k)
+      const smaller = median(zone.map(rowHeight)) <= median(rows.slice(0, k).map(rowHeight)) * 0.92
+      if (isNoteStart(zone[0].text, true) || smaller) return split(k)
+    }
+  }
   for (let k = 2; k < rows.length; k++) {
     if (rows[k].y0 < pageHeight * 0.4) continue
     // 上面要有正文（至少两行写满的），不是只有章节标题
@@ -236,11 +259,7 @@ export function splitFootnotes(lines: OcrLine[], pageHeight: number): { body: Oc
       start--
     const marked = zone.filter(r => isNoteStart(r.text, true)).length
     if (!apart(start) && (marked < 2 || marked * 2 < zone.length)) continue
-    const noteRows = rows.slice(start)
-    const drop = new Set(noteRows.flatMap(r => r.lines))
-    // 去掉脚注后重新分段（脚注的字小、行短，会影响正文的左右边界）
-    const kept = assignParagraphs(lines.filter(l => !drop.has(l)))
-    return { body: kept, notes: noteRows.map(r => r.text) }
+    return split(start)
   }
   return { body: lines, notes: [] }
 }
