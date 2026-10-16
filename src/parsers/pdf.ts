@@ -178,7 +178,7 @@ export function linesToParagraphs(pages: Line[][], builder: BookBuilder): number
     if (para) builder.add(para, paraHead ? 2 : undefined)
     para = ''
     paraHead = false
-    for (const note of pendingNotes) builder.add(note, undefined, true)
+    for (const note of pendingNotes) builder.add(note, undefined, 'note')
     pendingNotes = []
   }
 

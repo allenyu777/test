@@ -14,6 +14,7 @@ import {
   IconPen,
   IconPlay,
   IconPrevChapter,
+  IconSkipPara,
   IconVoice,
 } from './icons'
 
@@ -109,6 +110,10 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
           <button class={`tool ${sleep.mode !== 'off' ? 'active' : ''}`} onClick={() => onSheet('timer')}>
             <IconMoon size={22} />
             <span>{sleepLabel}</span>
+          </button>
+          <button class="tool" onClick={() => player.skipParagraph()}>
+            <IconSkipPara size={22} />
+            <span>跳过本段</span>
           </button>
           <button class="tool" onClick={() => onNote(true)}>
             <IconMic size={22} />

@@ -42,9 +42,11 @@ export function chapterLevel(line: string): number {
  * 在段落列表中找出章节标题。
  * 会过滤掉书前目录页那种连续堆在一起的标题。
  */
-export function detectChapters(blocks: string[]): ChapterHit[] {
+export function detectChapters(blocks: string[], skip?: Set<number>): ChapterHit[] {
   const hits: ChapterHit[] = []
   for (let i = 0; i < blocks.length; i++) {
+    // 目录页、脚注里的"第X章"不算
+    if (skip?.has(i)) continue
     const level = chapterLevel(blocks[i])
     if (level >= 0) hits.push({ index: i, level })
   }

@@ -210,6 +210,9 @@ export function SettingsPage() {
         <Row title="朗读脚注" desc="页面下方的注释和正文里的〔1〕①等编号。关闭时屏幕上照常显示，朗读时跳过">
           <Switch on={s.readNotes} onChange={v => updateSettings({ readNotes: v })} />
         </Row>
+        <Row title="朗读目录、版权页和图表" desc="书前的目录页、版权页，图表的标题、表格里的数字和资料来源。关闭时屏幕上照常显示（灰色），朗读时跳过">
+          <Switch on={s.readExtras} onChange={v => updateSettings({ readExtras: v })} />
+        </Row>
         <Row title="每本书单独记住语速">
           <Switch on={s.perBookRate} onChange={v => updateSettings({ perBookRate: v })} />
         </Row>

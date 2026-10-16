@@ -20,6 +20,7 @@ export function parseHtml(bytes: Uint8Array, fileName: string): ParsedBook {
     blocks: builder.blocks,
     heads: builder.heads,
     notes: builder.notes,
+    quiet: builder.quiet,
     toc: [],
   }
 }
