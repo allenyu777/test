@@ -2,17 +2,17 @@ import { useState } from 'preact/hooks'
 import type { Book } from '../core/book'
 import { estimateSeconds, formatDuration } from '../core/text'
 import { player } from '../player'
+import { settings } from '../settings'
 import { useStore } from '../store'
 import { voiceLabel } from '../tts/voices'
 import {
-  IconBack15,
-  IconFwd15,
   IconMoon,
   IconNextChapter,
   IconPause,
   IconPen,
   IconPlay,
   IconPrevChapter,
+  IconSkip,
   IconSkipPara,
   IconVoice,
 } from './icons'
@@ -36,6 +36,8 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
   const sleep = useStore(player.store, s => s.sleep)
   const percent = useStore(player.store, s => s.percent)
   const chapter = useStore(player.store, s => s.chapter)
+  const skipBack = useStore(settings, s => s.skipBack)
+  const skipForward = useStore(settings, s => s.skipForward)
   const [drag, setDrag] = useState<number | null>(null)
 
   const range = book.chapterRange(pos.b)
@@ -80,8 +82,8 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
           <button class="icon-btn" onClick={() => player.skipChapter(-1)} aria-label="上一章">
             <IconPrevChapter size={22} />
           </button>
-          <button class="icon-btn" onClick={() => player.skip(-1)} aria-label="上一句">
-            <IconBack15 size={24} />
+          <button class="icon-btn" onClick={() => player.skipBy(-1)} aria-label={`后退 ${skipBack} 秒`}>
+            <IconSkip seconds={skipBack} size={30} />
           </button>
           <button
             class="main"
@@ -90,8 +92,8 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
           >
             {loading ? <div class="spinner" /> : playing ? <IconPause size={28} /> : <IconPlay size={28} />}
           </button>
-          <button class="icon-btn" onClick={() => player.skip(1)} aria-label="下一句">
-            <IconFwd15 size={24} />
+          <button class="icon-btn" onClick={() => player.skipBy(1)} aria-label={`快进 ${skipForward} 秒`}>
+            <IconSkip seconds={skipForward} forward size={30} />
           </button>
           <button class="icon-btn" onClick={() => player.skipChapter(1)} aria-label="下一章">
             <IconNextChapter size={22} />

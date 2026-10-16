@@ -30,6 +30,20 @@ function formatBytes(n: number) {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+const SKIP_SECONDS = [5, 10, 15, 30]
+
+function SecondsChips({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div class="chips" style={{ flexWrap: 'nowrap' }}>
+      {SKIP_SECONDS.map(v => (
+        <button key={v} class={`chip ${v === value ? 'active' : ''}`} onClick={() => onChange(v)}>
+          {v}秒
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Row({ title, desc, children, onClick }: { title: string; desc?: string; children?: preact.ComponentChildren; onClick?: () => void }) {
   const Tag = onClick ? 'button' : 'div'
   return (
@@ -213,6 +227,12 @@ export function SettingsPage() {
         </Row>
         <Row title="朗读目录、版权页和图表" desc="书前的目录页、版权页，图表的标题、表格里的数字和资料来源。关闭时屏幕上照常显示（灰色），朗读时跳过">
           <Switch on={s.readExtras} onChange={v => updateSettings({ readExtras: v })} />
+        </Row>
+        <Row title="后退">
+          <SecondsChips value={s.skipBack} onChange={v => updateSettings({ skipBack: v })} />
+        </Row>
+        <Row title="快进">
+          <SecondsChips value={s.skipForward} onChange={v => updateSettings({ skipForward: v })} />
         </Row>
         <Row title="每本书单独记住语速">
           <Switch on={s.perBookRate} onChange={v => updateSettings({ perBookRate: v })} />

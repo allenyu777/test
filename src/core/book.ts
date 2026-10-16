@@ -327,6 +327,35 @@ export class Book {
     }
   }
 
+  /**
+   * 按朗读的字数前进 / 后退（快进 15 秒、后退 10 秒用）：跳过的是要读的句子，脚注等不读的不算。
+   * 前进到累计字数超过 chars 的那一句，至少前进一句；后退到累计够 chars 的那一句，至少后退一句。
+   * 前进到书末返回 null，后退到书首返回第一句。
+   */
+  skipChars(pos: Pos, chars: number): Pos | null {
+    const length = (p: Pos) => this.sentenceText(p).length
+    if (chars >= 0) {
+      let p: Pos | null = this.clamp(pos)
+      let acc = 0
+      for (let first = true; p; first = false) {
+        const len = length(p)
+        if (!first && acc + len > chars) return p
+        acc += len
+        p = this.next(p)
+      }
+      return null
+    }
+    let p = this.prev(this.clamp(pos))
+    let acc = 0
+    while (p) {
+      acc += length(p)
+      const before = this.prev(p)
+      if (acc >= -chars || !before) return p
+      p = before
+    }
+    return this.speakableFrom({ b: 0, o: 0 })
+  }
+
   /** 当前位置若不可朗读（如分隔符），前进到下一个可朗读的句子 */
   speakableFrom(pos: Pos): Pos | null {
     const p = this.clamp(pos)
