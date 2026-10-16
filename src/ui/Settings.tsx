@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
+import { UpdateBanner } from './UpdateBanner'
 import { createBackup, restoreBackup } from '../backup'
 import { requestPersistence, storageEstimate } from '../db'
 import { player } from '../player'
@@ -317,7 +318,7 @@ export function SettingsPage() {
           <br />
           <b style={{ color: 'var(--text)' }}>扫描版 PDF</b>：导入时会提示识别文字。本机识别免费、离线、不上传，用的是 PaddleOCR 模型，简体繁体都很准（首次下载约 30 MB）；页眉、页码会自动去掉。识别期间请让 App 保持在前台。
           <br />
-          <b style={{ color: 'var(--text)' }}>做笔记</b>：在正文点一下句子，选「笔记」或「语音」；播放时可直接点底部「语音笔记」。
+          <b style={{ color: 'var(--text)' }}>做笔记</b>：在正文点一下句子，选「笔记」或「语音」；播放时点底部「笔记」，可以打字，也可以点红色按钮录音。
           <br />
           <b style={{ color: 'var(--text)' }}>快速定位</b>：滚动离开朗读位置后，右下角会出现「回到朗读位置」。
           <br />
@@ -325,7 +326,11 @@ export function SettingsPage() {
         </div>
       </div>
       <div class="about">
-        听书 v1.4 · 使用 foliate-js（MIT）、pdf.js（Apache-2.0）、PaddleOCR 模型（Apache-2.0）、ppu-paddle-ocr（MIT）、ONNX Runtime（MIT）、Tesseract.js（Apache-2.0）
+        <div class="about-version">
+          听书 v{__APP_VERSION__}
+          <UpdateBanner />
+        </div>
+         使用 foliate-js（MIT）、pdf.js（Apache-2.0）、PaddleOCR 模型（Apache-2.0）、ppu-paddle-ocr（MIT）、ONNX Runtime（MIT）、Tesseract.js（Apache-2.0）
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}

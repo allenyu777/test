@@ -286,7 +286,7 @@ export function NoteEditor({ book, meta, pos, note, autoRecord, onClose, onSaved
   const hasAudio = !!audio || !!keepAudioId
   return (
     <Sheet
-      title={note ? '编辑笔记' : '写笔记'}
+      title={note ? '编辑笔记' : '笔记'}
       onClose={() => finish(note ?? null)}
       actions={
         note && (

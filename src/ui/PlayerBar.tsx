@@ -7,7 +7,6 @@ import { voiceLabel } from '../tts/voices'
 import {
   IconBack15,
   IconFwd15,
-  IconMic,
   IconMoon,
   IconNextChapter,
   IconPause,
@@ -115,13 +114,10 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
             <IconSkipPara size={22} />
             <span>跳过本段</span>
           </button>
-          <button class="tool" onClick={() => onNote(true)}>
-            <IconMic size={22} />
-            <span>语音笔记</span>
-          </button>
+          {/* 笔记里可以打字，也可以录音 */}
           <button class="tool" onClick={() => onNote(false)}>
             <IconPen size={22} />
-            <span>写笔记</span>
+            <span>笔记</span>
           </button>
         </div>
       </div>
