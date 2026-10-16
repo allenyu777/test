@@ -9,7 +9,7 @@ import { transcribe, transcriptionAvailable } from '../notes/transcribe'
 import { player } from '../player'
 import { settings } from '../settings'
 import { makeWav } from '../tts/audio'
-import { IconMic, IconPause, IconPen, IconPlay, IconShare, IconSparkles, IconStop, IconTrash } from './icons'
+import { IconBookmarkFilled, IconMic, IconPause, IconPen, IconPlay, IconShare, IconSparkles, IconStop, IconTrash } from './icons'
 import { Sheet } from './Sheet'
 import { toast } from './toast'
 
@@ -395,14 +395,26 @@ interface NotesSheetProps {
   onClose: () => void
   onJump: (pos: Pos) => void
   onEdit: (note: Note) => void
+  onDelete: (note: Note) => void
   onExport: () => void
 }
 
-export function NotesSheet({ meta, notes, onClose, onJump, onEdit, onExport }: NotesSheetProps) {
+type NoteFilter = 'all' | 'note' | 'highlight' | 'bookmark'
+const FILTERS: [NoteFilter, string][] = [
+  ['all', '全部'],
+  ['note', '笔记'],
+  ['highlight', '划线'],
+  ['bookmark', '书签'],
+]
+const kindOf = (n: Note): NoteFilter => n.kind ?? 'note'
+
+export function NotesSheet({ meta, notes: all, onClose, onJump, onEdit, onDelete, onExport }: NotesSheetProps) {
+  const [filter, setFilter] = useState<NoteFilter>('all')
+  const notes = filter === 'all' ? all : all.filter(n => kindOf(n) === filter)
   let lastChapter: string | null = null
   return (
     <Sheet
-      title={`笔记 · ${notes.length}`}
+      title={`笔记 · ${all.length}`}
       onClose={onClose}
       actions={
         notes.length > 0 && (
@@ -412,16 +424,29 @@ export function NotesSheet({ meta, notes, onClose, onJump, onEdit, onExport }: N
         )
       }
     >
-      {!notes.length && (
+      {all.length > 0 && (
+        <div class="chips" style={{ marginBottom: '10px' }}>
+          {FILTERS.map(([key, label]) => {
+            const count = key === 'all' ? all.length : all.filter(n => kindOf(n) === key).length
+            return (
+              <button key={key} class={`chip ${filter === key ? 'active' : ''}`} onClick={() => setFilter(key)}>
+                {label} {count}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {all.length > 0 && !notes.length && <div class="hint" style={{ textAlign: 'center' }}>还没有{FILTERS.find(f => f[0] === filter)?.[1]}</div>}
+      {!all.length && (
         <div class="empty" style={{ paddingTop: '24px' }}>
           <div class="empty-art" style={{ width: '72px', height: '72px', borderRadius: '22px' }}>
             <IconPen size={32} />
           </div>
           <h2>还没有笔记</h2>
           <p>
-            在正文里点一下任意句子，选择「笔记」或「语音」；
+            在正文里点一下任意句子，可以「划线」「笔记」「书签」；
             <br />
-            播放时也可以直接点下方的「语音笔记」。
+            播放时点下方的「笔记」可以打字或录音，点顶部的书签图标可以在朗读位置加书签。
           </p>
         </div>
       )}
@@ -431,8 +456,9 @@ export function NotesSheet({ meta, notes, onClose, onJump, onEdit, onExport }: N
         return (
           <div key={n.id}>
             {header !== null && <div class="note-chapter">{header || meta.title}</div>}
-            <div class="note-card">
+            <div class={`note-card ${n.kind ?? ''}`}>
               <button class="note-quote" onClick={() => onJump({ b: n.b, o: n.o })}>
+                {n.kind === 'bookmark' && <IconBookmarkFilled size={14} class="accent" />}
                 {n.quote}
               </button>
               {n.text && <div class="note-text">{n.text}</div>}
@@ -443,9 +469,15 @@ export function NotesSheet({ meta, notes, onClose, onJump, onEdit, onExport }: N
                 <button class="chip" onClick={() => onJump({ b: n.b, o: n.o })}>
                   定位
                 </button>
-                <button class="chip" onClick={() => onEdit(n)}>
-                  编辑
-                </button>
+                {n.kind ? (
+                  <button class="chip" onClick={() => onDelete(n)}>
+                    删除
+                  </button>
+                ) : (
+                  <button class="chip" onClick={() => onEdit(n)}>
+                    编辑
+                  </button>
+                )}
               </div>
             </div>
           </div>

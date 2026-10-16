@@ -5,21 +5,37 @@ import type { BookMeta, Note } from '../db'
 import { library, loadBook } from '../library'
 import { ocrRunner } from '../ocr/runner'
 import { isGarbled } from '../parsers/garble'
+import { markNumber, NOTE_REF } from '../parsers/notes'
 import { copyText } from '../notes/export'
 import { player } from '../player'
 import { settings } from '../settings'
 import { useStore } from '../store'
 import { ExportSheet } from './ExportSheet'
-import { IconChevronLeft, IconChevronRight, IconCopy, IconList, IconLocate, IconMic, IconNotes, IconPen, IconPlay, IconType } from './icons'
+import {
+  IconBookmark,
+  IconBookmarkFilled,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCopy,
+  IconHighlight,
+  IconList,
+  IconLocate,
+  IconNotes,
+  IconPen,
+  IconPlay,
+  IconType,
+} from './icons'
 import { NoteEditor, NotesSheet } from './Notes'
 import { PlayerBar, type ToolSheet } from './PlayerBar'
 import { DisplaySheet, SpeedSheet, TimerSheet, TocSheet, VoiceSheet } from './ReaderSheets'
 import { goBack } from './router'
+import { Sheet } from './Sheet'
 import { toast } from './toast'
 
 type SheetState =
   | { type: 'toc' | 'notes' | 'display' | 'export' | ToolSheet }
   | { type: 'note'; pos: Pos; note?: Note | null; voice?: boolean }
+  | { type: 'footnote'; b: number; n: number }
   | null
 
 interface PopoverState {
@@ -96,15 +112,24 @@ function SectionView({ book, index, notesMap }: { book: Book; index: number; not
     let last = 0
     for (const s of book.sentences(b)) {
       if (s.o > last) children.push(text.slice(last, s.o))
-      const n = notesMap.get(`${b}:${s.o}`)
+      const marks = notesMap.get(`${b}:${s.o}`)
+      const n = marks?.filter(x => !x.kind)
+      const hl = marks?.some(x => x.kind === 'highlight')
+      const bm = marks?.some(x => x.kind === 'bookmark')
+      const cls = ['s', n?.length && 'has-note', hl && 'hl'].filter(Boolean).join(' ')
       children.push(
-        <span key={s.o} class={n ? 's has-note' : 's'} id={`s${b}-${s.o}`} data-b={b} data-o={s.o}>
+        <span key={s.o} class={cls} id={`s${b}-${s.o}`} data-b={b} data-o={s.o}>
+          {bm && (
+            <span class="bm-mark" aria-label="书签">
+              <IconBookmarkFilled size={14} />
+            </span>
+          )}
           {text.slice(s.o, s.e)}
-          {n && (
+          {n?.length ? (
             <button class="note-mark" data-note={n[0].id} aria-label="查看笔记">
               <IconPen />
             </button>
-          )}
+          ) : null}
         </span>,
       )
       last = s.e
@@ -144,6 +169,9 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   useEffect(() => {
     reloadNotes()
   }, [meta.id])
+
+  const playPos = useStore(player.store, s => s.pos)
+  const bookmarked = notes.some(n => n.kind === 'bookmark' && n.b === playPos.b && book.clamp({ b: n.b, o: n.o }).o === playPos.o)
 
   const notesMap = useMemo(() => {
     const map = new Map<string, Note[]>()
@@ -319,8 +347,33 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     setSection(index)
   }
 
+  /** 点中的是不是正文里的注释编号（〔7〕①⁷），是的话返回对应的注释段落 */
+  const footnoteAt = (e: MouseEvent): { b: number; n: number } | null => {
+    const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+    const range = doc.caretRangeFromPoint?.(e.clientX, e.clientY)
+    const node = range?.startContainer
+    if (!range || !node || node.nodeType !== 3) return null
+    const para = node.parentElement?.closest('p[data-b]') as HTMLElement | null
+    if (!para || para.classList.contains('fn')) return null
+    const data = (node as Text).data
+    const offset = range.startOffset
+    for (const m of data.matchAll(NOTE_REF)) {
+      const start = m.index ?? 0
+      if (offset < start - 1 || offset > start + m[0].length) continue
+      const n = markNumber(m[0])
+      const note = n == null ? -1 : book.findNote(Number(para.dataset.b), n)
+      if (note >= 0) return { b: note, n: n! }
+    }
+    return null
+  }
+
   const onContentClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement
+    const footnote = !popover ? footnoteAt(e) : null
+    if (footnote) {
+      setSheet({ type: 'footnote', ...footnote })
+      return
+    }
     const mark = target.closest('.note-mark') as HTMLElement | null
     if (mark) {
       const n = notes.find(x => x.id === mark.dataset.note)
@@ -334,6 +387,38 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     }
     const rect = span.getBoundingClientRect()
     setPopover({ pos: { b: Number(span.dataset.b), o: Number(span.dataset.o) }, x: e.clientX, top: rect.top, bottom: rect.bottom })
+  }
+
+  /** 这一句的划线 / 书签 */
+  const markAt = (pos: Pos, kind: 'highlight' | 'bookmark') => {
+    const o = book.clamp(pos).o
+    return notes.find(n => n.kind === kind && n.b === pos.b && book.clamp({ b: n.b, o: n.o }).o === o)
+  }
+
+  /** 加上或去掉划线 / 书签 */
+  const toggleMark = async (pos: Pos, kind: 'highlight' | 'bookmark') => {
+    const existing = markAt(pos, kind)
+    if (existing) {
+      await db.deleteNote(existing)
+      toast(kind === 'highlight' ? '已取消划线' : '已删除书签')
+    } else {
+      const p = book.clamp(pos)
+      const now = Date.now()
+      await db.saveNote({
+        id: db.uid(),
+        bookId: meta.id,
+        b: p.b,
+        o: p.o,
+        quote: book.sentenceText(p),
+        text: '',
+        chapter: book.chapterTitle(p.b),
+        createdAt: now,
+        updatedAt: now,
+        kind,
+      })
+      toast(kind === 'highlight' ? '已划线' : '已加书签')
+    }
+    reloadNotes()
   }
 
   const playFrom = (pos?: Pos) => {
@@ -366,7 +451,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
 
   const popoverStyle = popover
     ? {
-        left: `${Math.max(8, Math.min(window.innerWidth - 256, popover.x - 124))}px`,
+        left: `${Math.max(8, Math.min(window.innerWidth - 288, popover.x - 140))}px`,
         top: `${popover.top > headerHeight() + 80 ? popover.top - 66 : Math.min(popover.bottom + 8, window.innerHeight - barHeight() - 70)}px`,
       }
     : undefined
@@ -384,6 +469,9 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
           </div>
           <button class="icon-btn" onClick={() => setSheet({ type: 'toc' })} aria-label="目录">
             <IconList />
+          </button>
+          <button class="icon-btn" onClick={() => toggleMark(player.state.pos, 'bookmark')} aria-label={bookmarked ? '删除书签' : '在朗读位置加书签'}>
+            {bookmarked ? <IconBookmarkFilled class="accent" /> : <IconBookmark />}
           </button>
           <button class="icon-btn" onClick={() => setSheet({ type: 'notes' })} aria-label="笔记">
             <IconNotes />
@@ -471,6 +559,15 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
           <button
             onClick={() => {
               setPopover(null)
+              toggleMark(popover.pos, 'highlight')
+            }}
+          >
+            <IconHighlight size={18} />
+            {markAt(popover.pos, 'highlight') ? '取消划线' : '划线'}
+          </button>
+          <button
+            onClick={() => {
+              setPopover(null)
               setSheet({ type: 'note', pos: popover.pos })
             }}
           >
@@ -480,11 +577,11 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
           <button
             onClick={() => {
               setPopover(null)
-              setSheet({ type: 'note', pos: popover.pos, voice: true })
+              toggleMark(popover.pos, 'bookmark')
             }}
           >
-            <IconMic size={18} />
-            语音
+            <IconBookmark size={18} />
+            {markAt(popover.pos, 'bookmark') ? '删书签' : '书签'}
           </button>
           <button
             onClick={async () => {
@@ -508,6 +605,22 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
       />
 
       {sheet?.type === 'toc' && <TocSheet book={book} onClose={() => setSheet(null)} onJump={jumpToChapter} />}
+      {sheet?.type === 'footnote' && (
+        <Sheet title={`注释 ${sheet.n}`} onClose={() => setSheet(null)}>
+          <div class="footnote-text">{book.blocks[sheet.b]}</div>
+          <div class="chips" style={{ marginTop: '14px' }}>
+            <button
+              class="chip"
+              onClick={async () => {
+                const ok = await copyText(book.blocks[sheet.b])
+                toast(ok ? '已复制' : '复制失败')
+              }}
+            >
+              复制
+            </button>
+          </div>
+        </Sheet>
+      )}
       {sheet?.type === 'notes' && (
         <NotesSheet
           book={book}
@@ -516,6 +629,10 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
           onClose={() => setSheet(null)}
           onJump={jumpTo}
           onEdit={note => setSheet({ type: 'note', pos: { b: note.b, o: note.o }, note })}
+          onDelete={async note => {
+            await db.deleteNote(note)
+            reloadNotes()
+          }}
           onExport={() => setSheet({ type: 'export' })}
         />
       )}

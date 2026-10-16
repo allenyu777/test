@@ -6,6 +6,7 @@ import type { BookMeta, Note } from './db'
 import { formatDate } from './notes/export'
 import { extendLoadedBook, refreshLibrary } from './library'
 import { player } from './player'
+import { listenStats, mergeStats, type ListenStats } from './stats'
 
 interface BackupManifest {
   app: 'tingshu'
@@ -14,6 +15,8 @@ interface BackupManifest {
   books: Omit<BookMeta, 'cover'>[]
   notes: Note[]
   audio: { id: string; type: string }[]
+  /** 听书统计（旧备份没有） */
+  stats?: ListenStats
 }
 
 export async function createBackup(includeBooks: boolean): Promise<File> {
@@ -28,6 +31,7 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
     books: books.map(({ cover: _cover, ...rest }) => rest),
     notes,
     audio: audio.map(a => ({ id: a.id, type: a.type })),
+    stats: listenStats.get(),
   }
   for (const b of books) if (b.cover) files[`covers/${b.id}`] = new Uint8Array(b.cover)
   for (const a of audio) files[`audio/${a.id}`] = new Uint8Array(a.data)
@@ -225,6 +229,7 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     await db.saveNote(note)
     notes++
   }
+  mergeStats(manifest.stats, id => idMap.get(id))
   await refreshLibrary()
   // 正在打开的书如果恢复了更新的进度，让播放器也跳过去（不再重新保存）
   const loaded = player.meta

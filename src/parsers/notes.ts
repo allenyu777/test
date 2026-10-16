@@ -13,6 +13,24 @@ export function isNoteStart(text: string, smaller = false): boolean {
 }
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+const SUPERSCRIPTS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
+
+/** 编号里的数字：〔7〕 [ 7] ⑦ ⁷ → 7 */
+export function markNumber(mark: string): number | null {
+  const circled = CIRCLED.indexOf(mark.trim()[0] ?? '')
+  if (circled >= 0) return circled + 1
+  const digits = [...mark].map(c => (SUPERSCRIPTS.includes(c) ? String(SUPERSCRIPTS.indexOf(c)) : c)).join('').match(/\d{1,3}/)
+  return digits ? Number(digits[0]) : null
+}
+
+/** 注释段落开头的编号（〔1〕 [1] ① 1. ¹ 注1），没有返回 null */
+export function noteNumber(text: string): number | null {
+  const m = text.match(/^\s*(?:注\s*)?(?:[〔［\[【(（{]\s*\d{1,3}\s*[〕］\]】)）}]|[①-⑳]|[⁰¹²³⁴-⁹]+|\d{1,3}(?!\d))/)
+  return m ? markNumber(m[0]) : null
+}
+
+/** 正文里的注释编号（〔7〕 [7） ⑦ ⁷），用于点击查看注释；返回每个编号的位置 */
+export const NOTE_REF = /[〔［\[【{]\s*\d{1,3}\s*[〕］\]】)）}]|[(（]\s*\d{1,3}\s*[〕］\]】]|[①-⑳]|[⁰¹²³⁴-⁹]+/g
 
 /** 正文里有没有引用这个注释（编号不在段首） */
 function referenced(body: string[], mark: RegExpMatchArray): boolean {

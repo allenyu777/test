@@ -1,5 +1,6 @@
 // 播放控制：把书、朗读引擎、进度保存、锁屏控件、定时关闭串起来
 import { Book, type Pos } from './core/book'
+import { trackListening } from './stats'
 import { cjkRatio, isSpeakable, speechText } from './core/text'
 import * as db from './db'
 import type { BookMeta, ChapterMark } from './db'
@@ -117,6 +118,7 @@ class Player {
     window.addEventListener('pagehide', () => this.saveNow())
     this.setupMediaSession()
     ocrRunner.onExtended(id => this.onBookExtended(id))
+    trackListening(this.store)
     settings.subscribe(() => {
       if (!this.book) return
       this.book.skipNotes = !settings.get().readNotes
