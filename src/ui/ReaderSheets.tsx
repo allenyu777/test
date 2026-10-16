@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Book } from '../core/book'
+import type { Book, Pos } from '../core/book'
+import { searchBook, snippet } from '../core/search'
 import { baseLang } from '../core/text'
 import type { BookMeta } from '../db'
 import { player } from '../player'
@@ -21,23 +22,39 @@ import {
   systemVoices,
   type VoiceOption,
 } from '../tts/voices'
-import { IconCheck, IconPlay, IconRefresh, IconStop } from './icons'
+import { IconCheck, IconClose, IconPlay, IconRefresh, IconSearch, IconStop } from './icons'
 import { navigate } from './router'
 import { Sheet, Switch } from './Sheet'
 import { toast } from './toast'
 
 /* ---------- 目录 ---------- */
+const SEARCH_LIMIT = 300
+// 关掉目录再打开时保留上次的搜索词
+let lastQuery = ''
+
 export function TocSheet({
   book,
   onClose,
   onJump,
+  onFound,
 }: {
   book: Book
   onClose: () => void
   /** fromStart：从这一章开头读（否则读过一部分的章节接着上次的位置读） */
   onJump: (b: number, fromStart?: boolean) => void
+  /** 打开搜索结果所在的位置（不改变朗读位置） */
+  onFound: (pos: Pos) => void
 }) {
   const pos = useStore(player.store, s => s.pos)
+  const [query, setQuery] = useState(lastQuery)
+  const [term, setTerm] = useState(lastQuery)
+  // 输入停顿一下再搜，长书也不卡
+  useEffect(() => {
+    lastQuery = query
+    const t = setTimeout(() => setTerm(query.trim()), 200)
+    return () => clearTimeout(t)
+  }, [query])
+  const hits = useMemo(() => (term ? searchBook(book.blocks, term, SEARCH_LIMIT) : []), [book, term, book.blocks.length])
   const current = book.tocIndex(pos.b)
   const listRef = useRef<HTMLDivElement>(null)
   // 每一章上次读到的位置
@@ -46,35 +63,73 @@ export function TocSheet({
     listRef.current?.querySelector('.current')?.scrollIntoView({ block: 'center' })
   }, [])
   return (
-    <Sheet title={`目录 · ${book.toc.length}`} onClose={onClose}>
-      {!book.toc.length && <div class="muted">这本书没有目录</div>}
-      {resumes.some(Boolean) && <div class="hint small">读过一部分的章节，点一下会接着上次的位置读；点「从头」从这一章开头读。</div>}
-      <div ref={listRef}>
-        {book.toc.map((t, i) => {
-          const resume = resumes[i]
-          return (
-            <div class="toc-row" key={i}>
-              <button
-                class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
-                style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
-                onClick={() => onJump(t.b)}
-              >
-                <span>{t.title}</span>
-                {resume ? (
-                  <span class="pct resume">读到 {Math.floor(player.chapterPercent(resume))}%</span>
-                ) : (
-                  <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
-                )}
-              </button>
-              {resume && (
-                <button class="toc-restart" onClick={() => onJump(t.b, true)} aria-label={`从头读 ${t.title}`}>
-                  从头
-                </button>
-              )}
-            </div>
-          )
-        })}
+    <Sheet title={term ? '搜索' : `目录 · ${book.toc.length}`} onClose={onClose}>
+      <div class="search-box">
+        <IconSearch size={18} />
+        <input
+          type="search"
+          value={query}
+          placeholder="搜索全书"
+          enterKeyHint="search"
+          onInput={e => setQuery((e.target as HTMLInputElement).value)}
+        />
+        {query && (
+          <button class="search-clear" onClick={() => setQuery('')} aria-label="清除搜索">
+            <IconClose size={16} />
+          </button>
+        )}
       </div>
+      {term ? (
+        <>
+          <div class="hint small">{hits.length ? `找到 ${hits.length >= SEARCH_LIMIT ? `${SEARCH_LIMIT}+` : hits.length} 处` : '没有找到'}</div>
+          <div class="search-results">
+            {hits.map((h, i) => {
+              const s = snippet(book.blocks[h.b], h)
+              return (
+                <button key={i} class="search-hit" onClick={() => onFound({ b: h.b, o: h.start })}>
+                  <span class="where">{book.chapterTitle(h.b) || '正文'}</span>
+                  <span class="text">
+                    {s.pre}
+                    <mark>{s.match}</mark>
+                    {s.post}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      ) : (
+        <>
+          {!book.toc.length && <div class="muted">这本书没有目录</div>}
+          {resumes.some(Boolean) && <div class="hint small">读过一部分的章节，点一下会接着上次的位置读；点「从头」从这一章开头读。</div>}
+          <div ref={listRef}>
+            {book.toc.map((t, i) => {
+              const resume = resumes[i]
+              return (
+                <div class="toc-row" key={i}>
+                  <button
+                    class={`toc-item ${i === current ? 'current' : t.b < pos.b ? 'read' : ''}`}
+                    style={{ paddingLeft: `${8 + Math.min(t.level, 4) * 18}px` }}
+                    onClick={() => onJump(t.b)}
+                  >
+                    <span>{t.title}</span>
+                    {resume ? (
+                      <span class="pct resume">读到 {Math.floor(player.chapterPercent(resume))}%</span>
+                    ) : (
+                      <span class="pct">{Math.floor(book.percent({ b: t.b, o: 0 }))}%</span>
+                    )}
+                  </button>
+                  {resume && (
+                    <button class="toc-restart" onClick={() => onJump(t.b, true)} aria-label={`从头读 ${t.title}`}>
+                      从头
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </Sheet>
   )
 }

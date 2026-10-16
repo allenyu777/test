@@ -164,6 +164,8 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   const followingRef = useRef(following)
   followingRef.current = following
   const pendingScroll = useRef<'center' | 'top' | null>('center')
+  /** 要打开的搜索结果（换分段后滚动过去） */
+  const pendingTarget = useRef<Pos | null>(null)
 
   const reloadNotes = () => db.listNotes(meta.id).then(setNotes)
   useEffect(() => {
@@ -250,7 +252,10 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   useLayoutEffect(() => {
     const mode = pendingScroll.current
     pendingScroll.current = null
-    if (mode === 'center') applyHighlight('center')
+    if (pendingTarget.current) {
+      applyHighlight('none')
+      revealTarget()
+    } else if (mode === 'center') applyHighlight('center')
     else {
       if (mode === 'top') window.scrollTo(0, 0)
       applyHighlight('none')
@@ -339,6 +344,33 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     const { pos, start, resumed } = player.chapterTarget(b, fromStart)
     jumpTo(pos)
     if (resumed) player.toastResumed(pos, () => jumpTo(start))
+  }
+
+  /** 滚动到搜索结果所在的句子并闪一下（不改变朗读位置） */
+  const revealTarget = () => {
+    const p = pendingTarget.current
+    pendingTarget.current = null
+    if (!p) return
+    const el = document.getElementById(`s${p.b}-${p.o}`)
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const visible = window.innerHeight - barHeight() - headerHeight()
+    window.scrollTo(0, window.scrollY + rect.top - headerHeight() - Math.max(0, (visible - rect.height) / 2))
+    el.classList.add('found')
+    setTimeout(() => el.classList.remove('found'), 2500)
+    updateLocate()
+  }
+
+  const showFound = (pos: Pos) => {
+    setSheet(null)
+    if (player.state.status === 'playing') setFollowing(false)
+    const p = book.clamp(pos)
+    pendingTarget.current = p
+    const target = book.sectionIndex(p.b)
+    if (target !== sectionRef.current) {
+      pendingScroll.current = null
+      setSection(target)
+    } else requestAnimationFrame(revealTarget)
   }
 
   const goSection = (index: number) => {
@@ -604,7 +636,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
         onPlayFrom={() => playFrom()}
       />
 
-      {sheet?.type === 'toc' && <TocSheet book={book} onClose={() => setSheet(null)} onJump={jumpToChapter} />}
+      {sheet?.type === 'toc' && <TocSheet book={book} onClose={() => setSheet(null)} onJump={jumpToChapter} onFound={showFound} />}
       {sheet?.type === 'footnote' && (
         <Sheet title={`注释 ${sheet.n}`} onClose={() => setSheet(null)}>
           <div class="footnote-text">{book.blocks[sheet.b]}</div>
