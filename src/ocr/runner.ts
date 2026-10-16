@@ -19,6 +19,7 @@ import {
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
 import { dropMarginLines, linesToText, splitFootnotes } from './layout'
+import { findRuleLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
   continuesAcrossPage,
@@ -134,6 +135,19 @@ export function appendPage(
   if (notes.length) {
     content.notes ??= []
     for (const note of notes) content.notes.push(content.blocks.push(note) - 1)
+  }
+}
+
+/** 页面下半部分左边的短横线（脚注线） */
+function pageRuleLines(canvas: HTMLCanvasElement): RuleLine[] {
+  try {
+    const top = Math.floor(canvas.height * 0.35)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return []
+    const img = ctx.getImageData(0, top, Math.ceil(canvas.width * 0.75), canvas.height - top)
+    return findRuleLines(img, top, canvas.width)
+  } catch {
+    return []
   }
 }
 
@@ -387,10 +401,12 @@ class OcrRunner {
     const canvas = await renderPage(pdf, index)
     try {
       const pageHeight = canvas.height
+      // 识别前先在图片上找脚注线（识别时画布的内容可能被交给后台线程）
+      const rules = ocr.engine === 'cloud' ? [] : pageRuleLines(canvas)
       const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
-        const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight)
+        const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight, rules)
         return { paragraphs: ocrTextToParagraphs(linesToText(body)), notes: ocrTextToParagraphs(notesToText(notes)) }
       }
       const { body, notes } = splitTrailingNotes(ocrTextToParagraphs(result.text))

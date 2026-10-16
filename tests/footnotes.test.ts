@@ -142,3 +142,55 @@ describe('listening skips footnotes', () => {
     expect(book.totalChars).toBe(content.blocks.join('').length)
   })
 })
+
+import { findRuleLines } from '../src/ocr/rules'
+import rulePage from './fixtures/ocr-footnotes-rule.json'
+
+/** 白底图片，画上几块"文字"和横线 */
+function image(width: number, height: number, draw: (fill: (x0: number, y0: number, x1: number, y1: number) => void) => void) {
+  const data = new Uint8ClampedArray(width * height * 4).fill(255)
+  draw((x0, y0, x1, y1) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) data.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 3)
+  })
+  return { data, width, height }
+}
+
+describe('footnote rule line in the page image', () => {
+  it('finds a short line on the left with blank space around it', () => {
+    const img = image(1000, 400, fill => {
+      // 正文：一个个字
+      for (let x = 100; x < 900; x += 40) fill(x, 50, x + 30, 80)
+      fill(100, 150, 330, 152)
+      for (let x = 100; x < 600; x += 30) fill(x, 200, x + 22, 222)
+    })
+    expect(findRuleLines(img, 1000, 1000)).toEqual([{ y: 1151, x0: 100, x1: 330 }])
+  })
+  it('ignores dashes inside a line of text, long table borders and thick bars', () => {
+    const img = image(1000, 400, fill => {
+      for (let x = 100; x < 400; x += 40) fill(x, 50, x + 30, 80)
+      fill(400, 64, 520, 66)
+      for (let x = 520; x < 900; x += 40) fill(x, 50, x + 30, 80)
+      fill(50, 150, 950, 152)
+      fill(100, 250, 300, 280)
+    })
+    expect(findRuleLines(img, 0, 1000)).toEqual([])
+  })
+})
+
+describe('footnotes below a rule line (notes as tall as the body in OCR)', () => {
+  const lines = rulePage.lines as OcrLine[]
+  it('uses the rule line', () => {
+    expect(splitFootnotes(lines, rulePage.pageHeight).notes).toEqual([])
+    const { body, notes } = splitFootnotes(lines, rulePage.pageHeight, [{ y: 1720, x0: 130, x1: 420 }])
+    expect(body).toHaveLength(2)
+    expect(ocrTextToParagraphs(notesToText(notes))).toEqual([
+      '〔1〕《申报》1879年7月21日。',
+      expect.stringMatching(/^\[2 \] Mike Davis.*London,New York,2001\.p\.76\.$/),
+      '[3] Ibid,p.78.',
+    ])
+  })
+  it('a centered separator or a line high up the page is not a footnote rule', () => {
+    expect(splitFootnotes(lines, rulePage.pageHeight, [{ y: 1720, x0: 600, x1: 900 }]).notes).toEqual([])
+    expect(splitFootnotes(lines, rulePage.pageHeight, [{ y: 1720, x0: 130, x1: 1500 }]).notes).toEqual([])
+  })
+})
