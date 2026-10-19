@@ -85,3 +85,22 @@ const SUPERSCRIPT_REF = /(^|[^\sA-Za-z\d⁰¹²³⁴-⁹])[⁰¹²³⁴-⁹]+/g
 export function stripNoteRefs(text: string): string {
   return text.replace(BRACKET_REF, '$1').replace(PAREN_REF, '$1').replace(CIRCLED_REF, '$1').replace(SUPERSCRIPT_REF, '$1')
 }
+
+/**
+ * 正文里注释编号的位置（和 stripNoteRefs 去掉的是同一批），屏幕上显示成小号上标；
+ * 编号后面到标点之前的空格（识别时常多出来："”〔3〕 。"）也算在里面。
+ */
+export function noteRefRanges(text: string): [number, number][] {
+  const ranges: [number, number][] = []
+  for (const re of [BRACKET_REF, PAREN_REF, CIRCLED_REF, SUPERSCRIPT_REF]) {
+    for (const m of text.matchAll(re)) {
+      const start = (m.index ?? 0) + m[1].length
+      let end = (m.index ?? 0) + m[0].length
+      if (end <= start) continue
+      const space = text.slice(end).match(/^\s+(?=[，。、；：！？,.;:!?”"」』）)])/)
+      if (space) end += space[0].length
+      if (!ranges.some(([a, b]) => start < b && end > a)) ranges.push([start, end])
+    }
+  }
+  return ranges.sort((a, b) => a[0] - b[0])
+}

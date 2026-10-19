@@ -991,6 +991,20 @@ a {
   cursor: pointer;
 }
 
+/* 正文里的注释编号：像原书一样的小号上标，点一下看注释 */
+.reader-content sup.ref {
+  font-size: 0.62em;
+  line-height: 0;
+  vertical-align: 0.55em;
+  color: var(--accent);
+  white-space: nowrap;
+  padding: 0 0.1em;
+}
+
+.reader-content .ref-gap {
+  font-size: 0;
+}
+
 .s.cur {
   background: var(--hl);
   box-shadow: 0 0 0 2px var(--hl);

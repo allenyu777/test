@@ -5,7 +5,7 @@ import type { BookMeta, Note } from '../db'
 import { library, loadBook } from '../library'
 import { ocrRunner } from '../ocr/runner'
 import { isGarbled } from '../parsers/garble'
-import { markNumber, NOTE_REF } from '../parsers/notes'
+import { markNumber, NOTE_REF, noteRefRanges } from '../parsers/notes'
 import { copyText } from '../notes/export'
 import { player } from '../player'
 import { settings } from '../settings'
@@ -101,6 +101,30 @@ export function Reader({ id }: { id: string }) {
   return <ReaderView key={id} meta={state.meta} book={state.book} />
 }
 
+/** text 中 [from, to) 这一段，注释编号显示成小号上标 */
+function withRefs(text: string, from: number, to: number, refs: [number, number][]): (string | preact.JSX.Element)[] {
+  const out: (string | preact.JSX.Element)[] = []
+  let at = from
+  for (const [a, b] of refs) {
+    if (b <= from || a >= to) continue
+    const start = Math.max(a, from)
+    const end = Math.min(b, to)
+    if (start > at) out.push(text.slice(at, start))
+    const ref = text.slice(start, end)
+    const mark = ref.trimEnd()
+    out.push(
+      <sup key={start} class="ref">
+        {mark}
+        {/* 识别时多出来的空格：留在文字里（位置不变），不占地方 */}
+        {mark !== ref && <span class="ref-gap">{ref.slice(mark.length)}</span>}
+      </sup>,
+    )
+    at = end
+  }
+  if (at < to) out.push(text.slice(at, to))
+  return out
+}
+
 // 注意：不要引入 preact/compat，它会把 onChange 改成 input 事件，导致拖动进度条时不停跳转
 function SectionView({ book, index, notesMap }: { book: Book; index: number; notesMap: Map<string, Note[]> }) {
   const { start, end } = book.sections[index]
@@ -109,9 +133,11 @@ function SectionView({ book, index, notesMap }: { book: Book; index: number; not
     const text = book.blocks[b]
     const head = book.heads[b]
     const children: (string | preact.JSX.Element)[] = []
+    // 注释里段首的编号不是引用；只看不听的段落照原样显示
+    const refs = head || book.isNote(b) || book.isQuiet(b) ? [] : noteRefRanges(text)
     let last = 0
     for (const s of book.sentences(b)) {
-      if (s.o > last) children.push(text.slice(last, s.o))
+      if (s.o > last) children.push(...withRefs(text, last, s.o, refs))
       const marks = notesMap.get(`${b}:${s.o}`)
       const n = marks?.filter(x => !x.kind)
       const hl = marks?.some(x => x.kind === 'highlight')
@@ -124,7 +150,7 @@ function SectionView({ book, index, notesMap }: { book: Book; index: number; not
               <IconBookmarkFilled size={14} />
             </span>
           )}
-          {text.slice(s.o, s.e)}
+          {withRefs(text, s.o, s.e, refs)}
           {n?.length ? (
             <button class="note-mark" data-note={n[0].id} aria-label="查看笔记">
               <IconPen />
@@ -134,7 +160,7 @@ function SectionView({ book, index, notesMap }: { book: Book; index: number; not
       )
       last = s.e
     }
-    if (last < text.length) children.push(text.slice(last))
+    if (last < text.length) children.push(...withRefs(text, last, text.length, refs))
     out.push(
       <p key={b} data-b={b} class={[head ? `h h${head}` : book.isNote(b) ? 'fn' : '', book.isQuiet(b) ? 'quiet' : ''].filter(Boolean).join(' ') || undefined}>
         {children}
