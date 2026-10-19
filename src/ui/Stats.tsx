@@ -36,7 +36,7 @@ export function StatsSheet({ books, onClose }: { books: BookMeta[]; onClose: () 
   const stats = useStore(listenStats, s => s)
   const sum = summarize(stats)
   const max = Math.max(60, ...sum.last7.map(d => d.seconds))
-  const finished = books.filter(b => b.percent >= 99).length
+  const finished = books.filter(b => b.finished).length
   const titles = new Map(books.map(b => [b.id, b.title]))
   const top = Object.entries(stats.books)
     .filter(([id, s]) => titles.has(id) && s >= 60)

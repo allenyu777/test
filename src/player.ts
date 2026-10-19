@@ -4,7 +4,7 @@ import { trackListening } from './stats'
 import { charsForSeconds, cjkRatio, estimateSeconds, isSpeakable, speechText } from './core/text'
 import * as db from './db'
 import type { BookMeta, ChapterMark } from './db'
-import { coverUrl, library, patchBookLocal } from './library'
+import { coverUrl, library, patchBookLocal, updateBookMeta } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
 import { createStore } from './store'
@@ -664,6 +664,15 @@ class Player {
     }
   }
 
+  /**
+   * 标记已读完 / 移回在读（书架分组用）。
+   * 只有这里、读到全书结尾、"从头开始"会改变这个标记；之后再听其中的章节，书仍然留在"已读完"
+   */
+  async setFinished(id: string, finished: boolean) {
+    if (this.meta?.id === id) this.meta.finished = finished
+    await updateBookMeta(id, { finished })
+  }
+
   private finishBook() {
     this.setStatus('idle')
     // 读完时进度记为 100%，之后再保存也不会把"已读完"改回去
@@ -769,7 +778,6 @@ class Player {
     if (!meta || !book) return
     const { pos, percent, chapter } = this.state
     const patch: Partial<BookMeta> = { pos, percent, chapter, lastReadAt: Date.now(), chapterPos: { ...meta.chapterPos } }
-    if (meta.finished && percent < 99) patch.finished = false
     Object.assign(meta, patch)
     patchBookLocal(meta.id, patch)
     db.updateBook(meta.id, patch).catch(() => {
