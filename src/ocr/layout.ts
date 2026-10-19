@@ -1,5 +1,5 @@
 // 根据识别出的每一行在页面上的位置整理版面：拆开双栏、去掉页眉页脚（页码、书名、章节名）、分段
-import { isNoteStart } from '../parsers/notes'
+import { isNoteStart, notesToText } from '../parsers/notes'
 import type { RuleLine } from './rules'
 import { isPageNumber, withoutPageNumber } from './text'
 
@@ -262,6 +262,59 @@ export function splitFootnotes(lines: OcrLine[], pageHeight: number, rules: Rule
     return split(start)
   }
   return { body: lines, notes: [] }
+}
+
+// 图表标题："图 2-4 山西与直隶、上海粮价波动趋势之对比""表3.1""Figure 2"（短，不是完整的句子）
+const CAPTION_ROW = /^\s*(?:图|圖|插图|插圖|附图|附圖|表|附表|地图|地圖|fig\.?|figure|table|plate|chart)\s*[0-9０-９一二三四五六七八九十]+(?:\s*[-—–.．·:：]\s*[0-9０-９]+)*/i
+// 图表下面的说明、出处
+const NOTE_HEAD = /^\s*(?:说明|說明|注|資料來源|资料来源|数据来源|數據來源|来源|來源|source|sources|note|notes)\s*[:：]/i
+const cjkCount = (t: string) => (t.match(/[\u3400-\u9fff]/g) ?? []).length
+
+/**
+ * 分出页面上的插图和图表说明（显示为灰色，朗读时跳过）：
+ * 图表标题那一行；它上面紧挨着的图里的文字（坐标轴数字、图例，不是写满的正文行）；
+ * 它下面以"说明：""资料来源："开头的一段，以及后面缩进排版的各条说明（悬挂缩进，回到正文左边距就结束）。
+ */
+export function splitFigures(lines: OcrLine[]): { body: OcrLine[]; figures: string[][] } {
+  const rows = toRows(lines)
+  const rowLeft = (r: Row) => Math.min(...r.lines.map(l => l.x0))
+  const rowWidth = (r: Row) => Math.max(...r.lines.map(l => l.x1)) - rowLeft(r)
+  const fullWidth = Math.max(0, ...rows.map(rowWidth))
+  const isBodyRow = (r: Row) => cjkCount(r.text) >= 12 && rowWidth(r) >= fullWidth * 0.6
+  const drop = new Set<OcrLine>()
+  const figures: string[][] = []
+  for (let c = 0; c < rows.length; c++) {
+    const caption = rows[c]
+    const text = caption.text.trim()
+    if (!CAPTION_ROW.test(text) || text.length > 50 || /[。！？；]/.test(text)) continue
+    // 图里的文字：标题上面紧挨着、不是正文的行
+    let top = c
+    while (top > 0 && !isBodyRow(rows[top - 1]) && !drop.has(rows[top - 1].lines[0])) top--
+    let end = c + 1
+    if (end < rows.length && NOTE_HEAD.test(rows[end].text)) {
+      const head = rows[end]
+      const headX = rowLeft(head)
+      const charW = rowWidth(head) / Math.max(1, charCount(head.text))
+      end++
+      while (end < rows.length) {
+        const r = rows[end]
+        const x = rowLeft(r)
+        const numbered = /^\s*\d{1,2}\s*[.．、]/.test(r.text)
+        if (numbered ? x >= headX - charW : x >= headX + charW * 2.5) end++
+        else break
+      }
+    }
+    const label = rows.slice(top, c).map(r => r.text).join(' ')
+    const parts: string[] = []
+    if (label.trim()) parts.push(label)
+    parts.push(caption.text)
+    if (end > c + 1) parts.push(...notesToText(rows.slice(c + 1, end).map(r => r.text)).split('\n\n'))
+    figures.push(parts)
+    for (const r of rows.slice(top, end)) for (const l of r.lines) drop.add(l)
+    c = end - 1
+  }
+  if (!figures.length) return { body: lines, figures }
+  return { body: assignParagraphs(lines.filter(l => !drop.has(l))), figures }
 }
 
 /** 把行按段落拼回文字：段内换行，段落之间空一行（交给 ocrTextToParagraphs 整理） */

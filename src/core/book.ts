@@ -52,6 +52,8 @@ export interface BookContent {
   notes?: number[]
   /** 目录页、版权页、图表说明等只看不听的段落（从小到大） */
   quiet?: number[]
+  /** 扫描版：按版面认出的插图和图表说明（并入 quiet） */
+  captions?: number[]
 }
 
 export class BookBuilder {
@@ -201,7 +203,7 @@ export class Book {
     const oldLength = this.cum ? this.cum.length - 1 : 0
     // 末尾是上一页的脚注时，跨页接上的半句话加在脚注前面那一段
     let lastBody = oldLength - 1
-    while (lastBody > 0 && this.noteBlocks.has(lastBody)) lastBody--
+    while (lastBody > 0 && (this.noteBlocks.has(lastBody) || this.quietBlocks.has(lastBody))) lastBody--
     this.noteBlocks = new Set(content.notes)
     this.quietBlocks = new Set(content.quiet)
     this.blocks = content.blocks

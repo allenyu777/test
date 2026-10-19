@@ -194,3 +194,40 @@ describe('footnotes below a rule line (notes as tall as the body in OCR)', () =>
     expect(splitFootnotes(lines, rulePage.pageHeight, [{ y: 1720, x0: 130, x1: 1500 }]).notes).toEqual([])
   })
 })
+
+import { dropMarginLines, splitFigures } from '../src/ocr/layout'
+import figurePage from './fixtures/ocr-figure-page.json'
+
+describe('figures and figure notes on a scanned page (real PaddleOCR result, p. 94)', () => {
+  const lines = dropMarginLines(figurePage.lines as OcrLine[], figurePage.pageHeight)
+  it('takes the chart labels, the caption and every indented note item', () => {
+    const { body, figures } = splitFigures(lines)
+    expect(body).toEqual([])
+    const parts = figures[0].map(p => ocrTextToParagraphs(p).join(''))
+    expect(parts[0]).toMatch(/^60/)
+    expect(parts[1]).toBe('图2-4山西与直隶、上海粮价波动趋势之对比')
+    expect(parts.slice(2).map(p => p.replace(/\s/g, '').slice(0, 6))).toEqual(['说明：1.荣', '2.直隶地区', '3.上海米价', '4.由于各地'])
+    // 每条说明是完整的一段（原来按行断开："……价格的绝对水平仍然" / "不是完全可比的。"）
+    expect(parts[5]).toBe('4.由于各地的斗、石并不相等，尽管进行了单位换算，价格的绝对水平仍然不是完全可比的。')
+    expect(parts[2]).toContain('一斗麦=40斤')
+    expect(parts[2].endsWith('格为左侧纵轴指数。')).toBe(true)
+  })
+  it('body text after the notes (back at the left margin) stays body text', () => {
+    const last = lines[lines.length - 1]
+    const step = 68
+    const body = [0, 1, 2].map(i => ({
+      ...last,
+      text: i === 0 ? '光绪三年，山西全省大旱，粮价飞涨，饥民遍野，各地纷纷开仓赈济。' : '巡抚曾国荃奏请朝廷拨款赈灾，并动员绅商捐输，以济急需。',
+      x0: i === 0 ? 200 : 120,
+      x1: 1490,
+      y0: last.y0 + step * (i + 1),
+      y1: last.y1 + step * (i + 1),
+    }))
+    const { body: kept } = splitFigures([...lines, ...body])
+    expect(kept.map(l => l.text.slice(0, 4))).toEqual(['光绪三年', '巡抚曾国', '巡抚曾国'])
+  })
+  it('a sentence that merely mentions a figure is not a caption', () => {
+    const row = { ...lines[lines.length - 1], text: '图2-4显示，光绪三年粮价暴涨了数倍。', x0: 120, x1: 1490 }
+    expect(splitFigures([row]).figures).toEqual([])
+  })
+})
