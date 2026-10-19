@@ -1659,6 +1659,15 @@ a {
 }
 
 /* 声音 */
+.part-note {
+  margin: 0 0 14px;
+  color: var(--text-2);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  text-align: center;
+  text-indent: 0;
+}
+
 .book-end {
   display: flex;
   flex-direction: column;
