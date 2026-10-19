@@ -1,34 +1,34 @@
 // 共享的 <audio> 元素、iOS 播放解锁、静音保活、屏幕常亮
 
-/** 生成一段 8-bit 单声道 WAV（静音或极轻的噪声） */
+/** 生成一段完全无声的 16-bit 单声道 WAV（所有采样都是 0，任何音量下都听不到） */
 export function makeWav(seconds: number, sampleRate = 8000): Blob {
   const n = Math.max(1, Math.floor(seconds * sampleRate))
-  const buf = new ArrayBuffer(44 + n)
+  const bytes = n * 2
+  const buf = new ArrayBuffer(44 + bytes)
   const v = new DataView(buf)
   const str = (offset: number, s: string) => {
     for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i))
   }
   str(0, 'RIFF')
-  v.setUint32(4, 36 + n, true)
+  v.setUint32(4, 36 + bytes, true)
   str(8, 'WAVE')
   str(12, 'fmt ')
   v.setUint32(16, 16, true)
   v.setUint16(20, 1, true)
   v.setUint16(22, 1, true)
   v.setUint32(24, sampleRate, true)
-  v.setUint32(28, sampleRate, true)
-  v.setUint16(32, 1, true)
-  v.setUint16(34, 8, true)
+  v.setUint32(28, sampleRate * 2, true)
+  v.setUint16(32, 2, true)
+  v.setUint16(34, 16, true)
   str(36, 'data')
-  v.setUint32(40, n, true)
-  // 8-bit PCM 的静音是 128；加入 ±1 的抖动，避免系统判定为"无声音"而挂起
-  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128 + (i % 50 === 0 ? 1 : 0))
+  v.setUint32(40, bytes, true)
+  // 采样数据保持为 0：真正的静音（iOS 不会因为没有声音而停止播放）
   return new Blob([buf], { type: 'audio/wav' })
 }
 
 let silentUrl: string | null = null
 export function silent(): string {
-  if (!silentUrl) silentUrl = URL.createObjectURL(makeWav(1))
+  if (!silentUrl) silentUrl = URL.createObjectURL(makeWav(5))
   return silentUrl
 }
 

@@ -28,6 +28,8 @@ export interface EngineCallbacks {
   onPausedExternally?(): void
   /** 在锁屏控件、耳机上点了继续播放（系统直接让音频继续，不经过页面） */
   onResumedExternally?(): void
+  /** 暂停太久，音频已经真正停下（锁屏控件可以关掉了） */
+  onSuspended?(): void
 }
 
 export interface EngineOptions {

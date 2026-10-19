@@ -210,6 +210,8 @@ class Player {
     // 云端音频暂停后原地继续
     if (!from && s.status === 'paused' && this.engine?.resume()) {
       this.setStatus('playing')
+      // 暂停太久时锁屏控件已经收起，重新显示
+      this.updateMetadata()
       return
     }
     // 云端语音要先异步下载，提前在点击里解锁 <audio>；系统语音会在本次点击中同步开始朗读
@@ -530,6 +532,9 @@ class Player {
       onResumedExternally: () => {
         if (this.engine === engine && this.state.status !== 'playing') this.setStatus('playing')
       },
+      onSuspended: () => {
+        if (this.engine === engine && this.state.status !== 'playing') this.closeNowPlaying()
+      },
     }
     this.setPos(start)
     this.setStatus('playing')
@@ -831,6 +836,18 @@ class Player {
       } catch {
         // 不支持的操作
       }
+    }
+  }
+
+  /** 暂停太久：收起锁屏和控制中心里的播放控件（再播放时 updateMetadata 会重新显示） */
+  private closeNowPlaying() {
+    if (!('mediaSession' in navigator)) return
+    try {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.playbackState = 'none'
+      ;(navigator.mediaSession as MediaSession & { setPositionState?: (s?: MediaPositionState) => void }).setPositionState?.()
+    } catch {
+      // 忽略
     }
   }
 
