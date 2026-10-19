@@ -480,6 +480,13 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   const sec = book.sections[section]
   const prevSec = section > 0 ? book.sections[section - 1] : null
   const nextSec = section < book.sections.length - 1 ? book.sections[section + 1] : null
+  // 很长的一节会分成几页显示（每页约一万字），翻页按钮要说明是同一节的上一页、下一页，不是上一章、下一章
+  const entryOf = (s: typeof sec) => (s ? book.tocIndex(s.start) : -1)
+  const entryParts = sec ? book.sections.filter(s => entryOf(s) === entryOf(sec)) : []
+  const partIndex = sec ? entryParts.indexOf(sec) : -1
+  const entryTitle = entryOf(sec) >= 0 ? book.toc[entryOf(sec)].title : (sec?.title ?? '')
+  const prevSamePart = !!prevSec && entryOf(prevSec) === entryOf(sec)
+  const nextSamePart = !!nextSec && entryOf(nextSec) === entryOf(sec)
   const cjk = meta.lang === 'zh' || meta.lang === 'ja'
 
   const popoverStyle = popover
@@ -534,15 +541,20 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
           <div class="section-nav">
             <button onClick={() => goSection(section - 1)}>
               <IconChevronLeft size={16} />
-              <span>上一章 · {prevSec.title}</span>
+              <span>{prevSamePart ? `上一页 · 本节第 ${partIndex}/${entryParts.length} 部分` : `上一章 · ${prevSec.title}`}</span>
             </button>
+          </div>
+        )}
+        {entryParts.length > 1 && partIndex > 0 && (
+          <div class="part-note">
+            {entryTitle}（续，第 {partIndex + 1}/{entryParts.length} 部分）
           </div>
         )}
         {sectionView}
         <div class="section-nav" style={{ marginTop: '32px' }}>
           {nextSec ? (
             <button onClick={() => goSection(section + 1)}>
-              <span>下一章 · {nextSec.title}</span>
+              <span>{nextSamePart ? `下一页 · 本节第 ${partIndex + 2}/${entryParts.length} 部分` : `下一章 · ${nextSec.title}`}</span>
               <IconChevronRight size={16} />
             </button>
           ) : ocr && ocr.status !== 'done' ? null : (
