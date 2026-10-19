@@ -781,6 +781,8 @@ class Player {
         // 回到前台时如果朗读已经中断，从当前句继续
         if (this.state.status === 'playing' && engine.isStalled()) this.startEngine(this.state.pos)
       }
+      // 云端语音：回到前台时马上检查是不是真的在播放
+      if (engine instanceof CloudEngine && this.state.status === 'playing') engine.ensurePlaying()
     }
   }
 
