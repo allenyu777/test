@@ -1,6 +1,7 @@
 // 书籍内容模型：所有格式最终都转换成"段落数组 + 目录"
 import { detectChapters } from './chapters'
 import { findQuietBlocks } from './quiet'
+import { placeToc } from './tocplace'
 import { noteNumber } from '../parsers/notes'
 import { isSpeakable, normalizeText, splitSentences, type Sentence } from './text'
 
@@ -158,6 +159,10 @@ export function finalizeBook(id: string, parsed: ParsedBook): BookContent {
   const notes = parsed.notes ?? []
   const quiet = [...new Set([...(parsed.quiet ?? []), ...findQuietBlocks(blocks, notes)])].sort((a, b) => a - b)
   let toc = finalizeToc(blocks, heads, parsed.toc, new Set([...notes, ...quiet]))
+  // 目录项指到标题所在的段落（PDF 书签只有页码）
+  const placed = placeToc(blocks, toc)
+  toc = placed.toc
+  for (const [b, level] of placed.titled) heads[b] ??= Math.min(6, level + 1)
   const sections = buildSections(blocks, toc)
   if (!toc.length && sections.length > 1) toc = syntheticToc(blocks, sections)
   return { id, blocks, heads, toc, sections, ...(notes.length ? { notes } : {}), ...(quiet.length ? { quiet } : {}) }
@@ -203,6 +208,14 @@ export class Book {
     this.toc = content.toc
     this.sections = content.sections
     this.heads = content.heads
+    // 以前导入的书：目录项可能指在页首而不是标题处，打开时重新定位（只影响显示和计时，不改动保存的内容）
+    const placed = placeToc(content.blocks, content.toc)
+    if (placed.toc.some((t, i) => t !== content.toc[i])) {
+      this.toc = placed.toc
+      this.sections = buildSections(content.blocks, placed.toc)
+      this.heads = { ...content.heads }
+      for (const [b, level] of placed.titled) this.heads[b] ??= Math.min(6, level + 1)
+    }
     this.pages = content.pages
     const cum = new Float64Array(this.blocks.length + 1)
     // 识别下一页时，可能把跨页的句子接到原来最后一段后面，所以最后一段也重新计算

@@ -2,6 +2,7 @@
 import { buildSections, type BookContent, type TocEntry } from '../core/book'
 import { detectChapters } from '../core/chapters'
 import { findQuietBlocks } from '../core/quiet'
+import { placeToc } from '../core/tocplace'
 import { normalizeText } from '../core/text'
 import * as db from '../db'
 import type { OcrInfo } from '../db'
@@ -51,16 +52,12 @@ export function rebuildOcrContent(content: BookContent, outline: OutlineItem[] =
     const start = pages[item.page]
     if (start == null || start >= content.blocks.length) continue
     // 章节从页面中间开始时，指向标题所在的段落
-    const end = Math.min(pages.slice(item.page + 1).find(x => x != null) ?? content.blocks.length, content.blocks.length)
-    let b = start
-    for (let i = start; i < end; i++) {
-      if (content.blocks[i] === item.title) {
-        b = i
-        break
-      }
-    }
-    fromOutline.push({ title: item.title, b, level: item.level })
+    fromOutline.push({ title: item.title, b: start, level: item.level })
   }
+  // 章节从页面中间开始时（或一页上有章和节两个标题），指向标题所在的段落
+  fromOutline.sort((x, y) => x.b - y.b)
+  const placed = placeToc(content.blocks, fromOutline)
+  fromOutline.splice(0, fromOutline.length, ...placed.toc)
   // 目录页、版权页、图表说明：只看不听，也不当作章节标题
   const quiet = findQuietBlocks(content.blocks, content.notes)
   if (quiet.length) content.quiet = quiet
@@ -69,7 +66,7 @@ export function rebuildOcrContent(content: BookContent, outline: OutlineItem[] =
   content.heads = {}
   for (const h of hits) content.heads[h.index] = h.level + 2
   // 书签标题正好是某个段落时，按标题样式显示
-  for (const t of fromOutline) if (content.blocks[t.b] === t.title) content.heads[t.b] = Math.min(6, t.level + 1)
+  for (const [b, level] of placed.titled) content.heads[b] = Math.min(6, level + 1)
   let toc: TocEntry[] = fromOutline.length ? fromOutline : hits.map(h => ({ title: content.blocks[h.index], b: h.index, level: h.level }))
   if (toc.length < 2 && !fromOutline.length) {
     toc = []
