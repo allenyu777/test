@@ -1,5 +1,6 @@
 // 播放控制：把书、朗读引擎、进度保存、锁屏控件、定时关闭串起来
 import { Book, type Pos } from './core/book'
+import { paceOf, recordPace } from './tts/pace'
 import { trackListening } from './stats'
 import { charsForSeconds, cjkRatio, estimateSeconds, isSpeakable, speechText } from './core/text'
 import * as db from './db'
@@ -252,7 +253,7 @@ class Player {
   skipSeconds(seconds: number) {
     const book = this.book
     if (!book || !this.meta) return
-    const chars = charsForSeconds(Math.abs(seconds), this.meta.lang, this.state.rate) * Math.sign(seconds)
+    const chars = charsForSeconds(Math.abs(seconds), this.meta.lang, this.state.rate, this.paceCpm()) * Math.sign(seconds)
     const p = book.skipChars(this.state.pos, chars)
     if (p) this.seek(p)
   }
@@ -535,6 +536,7 @@ class Player {
       onResumedExternally: () => {
         if (this.engine === engine && this.state.status !== 'playing') this.setStatus('playing')
       },
+      onTiming: (chars, seconds) => recordPace(voiceKey(voice), chars, seconds),
       onSuspended: () => {
         if (this.engine === engine && this.state.status !== 'playing') this.closeNowPlaying()
       },
@@ -697,7 +699,12 @@ class Player {
     this.updatePositionState()
   }
 
-  /** 本章的估计总时长和已读时长（秒），锁屏进度条按整章显示 */
+  /** 当前声音实际的朗读速度（1 倍速每分钟字数；还没测到时为 undefined，按语言估算） */
+  paceCpm(): number | undefined {
+    return paceOf(voiceKey(this.state.voice))
+  }
+
+  /** 本章（目录里的一项，例如"第二节"）的估计总时长和已读时长（秒），锁屏进度条按它显示 */
   chapterTime(pos = this.state.pos): { duration: number; position: number; start: number; end: number } | null {
     const book = this.book
     if (!book || !this.meta) return null
@@ -706,7 +713,8 @@ class Player {
     const done = Math.min(total, book.charsBetween(start, pos.b) + pos.o)
     const lang = this.meta.lang
     const rate = this.state.rate
-    return { duration: estimateSeconds(total, lang, rate), position: estimateSeconds(done, lang, rate), start, end }
+    const cpm = this.paceCpm()
+    return { duration: estimateSeconds(total, lang, rate, cpm), position: estimateSeconds(done, lang, rate, cpm), start, end }
   }
 
   /**
@@ -881,6 +889,11 @@ class Player {
       // 忽略
     }
   }
+}
+
+/** 声音的标识（引擎 + 声音名），朗读速度按它分别记录 */
+function voiceKey(voice: { engine: string; id: string }): string {
+  return `${voice.engine}:${voice.id}`
 }
 
 export const player = new Player()

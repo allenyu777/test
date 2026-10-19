@@ -339,6 +339,17 @@ export class CloudEngine implements Engine {
     this.attached = true
     audio.defaultPlaybackRate = rate
     audio.playbackRate = rate
+    if (time === 0) {
+      audio.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (gen === this.gen && audio.src === current.url && isFinite(audio.duration)) {
+            this.callbacks?.onTiming?.(current.segment.text.replace(/\s+/g, '').length, audio.duration)
+          }
+        },
+        { once: true },
+      )
+    }
     if (time > 0) {
       audio.addEventListener(
         'loadedmetadata',
