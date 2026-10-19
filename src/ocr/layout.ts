@@ -270,33 +270,43 @@ const CAPTION_ROW = /^\s*(?:图|圖|插图|插圖|附图|附圖|表|附表|地�
 const NOTE_HEAD = /^\s*(?:说明|說明|注|資料來源|资料来源|数据来源|數據來源|来源|來源|source|sources|note|notes)\s*[:：]/i
 const cjkCount = (t: string) => (t.match(/[\u3400-\u9fff]/g) ?? []).length
 
+const isCaptionRow = (t: string) => CAPTION_ROW.test(t.trim()) && t.trim().length <= 50 && !/[。！？；，]/.test(t)
+const TABLE_CAPTION = /^\s*(?:表|附表|续表|續表|table)/i
+// 正文的句子（表格里的字一般不带逗号句号）
+const SENTENCE = /[，。；！？,;]/
+
 /**
- * 分出页面上的插图和图表说明（显示为灰色，朗读时跳过）：
- * 图表标题那一行；它上面紧挨着的图里的文字（坐标轴数字、图例，不是写满的正文行）；
- * 它下面以"说明：""资料来源："开头的一段，以及后面缩进排版的各条说明（悬挂缩进，回到正文左边距就结束）。
+ * 分出页面上的插图、表格和它们的说明（显示为灰色，朗读时跳过）：
+ * - 表格：图片上的长横线（边框、三线表）围起来的各行，连同上面的"表 2-4 ……"标题、下面的"资料来源："；
+ *   没找到横线时，"表 ……"标题下面连续几行不成句子的文字也算表格；
+ * - 插图：图表标题那一行；它上面紧挨着的图里的文字（坐标轴数字、图例，不是写满的正文行）；
+ * - 标题下面以"说明：""资料来源："开头的一段，以及后面缩进排版的各条说明（悬挂缩进，回到正文左边距就结束）。
+ * tableLines：页面图片上的长横线（findTableLines）。
  */
-export function splitFigures(lines: OcrLine[]): { body: OcrLine[]; figures: string[][] } {
+export function splitFigures(
+  lines: OcrLine[],
+  tableLines: RuleLine[] = [],
+): { body: OcrLine[]; figures: string[][]; /** 每个图表在页面上的上边 */ tops: number[] } {
   const rows = toRows(lines)
   const rowLeft = (r: Row) => Math.min(...r.lines.map(l => l.x0))
   const rowWidth = (r: Row) => Math.max(...r.lines.map(l => l.x1)) - rowLeft(r)
   const fullWidth = Math.max(0, ...rows.map(rowWidth))
   const isBodyRow = (r: Row) => cjkCount(r.text) >= 12 && rowWidth(r) >= fullWidth * 0.6
-  const drop = new Set<OcrLine>()
+  // 写满整行的正文（表格里的字只占一栏，不会从左写到右）
+  const isFullRow = (r: Row) => cjkCount(r.text) >= 12 && rowWidth(r) >= fullWidth * 0.85
+  const taken = new Set<Row>()
   const figures: string[][] = []
-  for (let c = 0; c < rows.length; c++) {
-    const caption = rows[c]
-    const text = caption.text.trim()
-    if (!CAPTION_ROW.test(text) || text.length > 50 || /[。！？；]/.test(text)) continue
-    // 图里的文字：标题上面紧挨着、不是正文的行
-    let top = c
-    while (top > 0 && !isBodyRow(rows[top - 1]) && !drop.has(rows[top - 1].lines[0])) top--
-    let end = c + 1
-    if (end < rows.length && NOTE_HEAD.test(rows[end].text)) {
+  const tops: number[] = []
+
+  // 标题（或表格）下面的说明：返回说明结束的位置
+  const notesEnd = (from: number) => {
+    let end = from
+    if (end < rows.length && !taken.has(rows[end]) && NOTE_HEAD.test(rows[end].text)) {
       const head = rows[end]
       const headX = rowLeft(head)
       const charW = rowWidth(head) / Math.max(1, charCount(head.text))
       end++
-      while (end < rows.length) {
+      while (end < rows.length && !taken.has(rows[end])) {
         const r = rows[end]
         const x = rowLeft(r)
         const numbered = /^\s*\d{1,2}\s*[.．、]/.test(r.text)
@@ -304,17 +314,75 @@ export function splitFigures(lines: OcrLine[]): { body: OcrLine[]; figures: stri
         else break
       }
     }
+    return end
+  }
+
+  // 表格：相邻两条横线之间没有正文句子，就是表格的一部分
+  const ys = [...new Set(tableLines.map(l => l.y))].sort((a, b) => a - b)
+  const center = (r: Row) => (r.y0 + r.y1) / 2
+  let bandStart = -1
+  for (let i = 0; i + 1 <= ys.length; i++) {
+    const inside = i + 1 < ys.length ? rows.filter(r => center(r) > ys[i] && center(r) < ys[i + 1]) : null
+    const full = inside?.filter(isFullRow) ?? []
+    const tableGap = inside !== null && full.length < 2 && !full.some(r => SENTENCE.test(r.text))
+    if (tableGap && bandStart < 0) bandStart = i
+    if (tableGap) continue
+    if (bandStart >= 0) {
+      const y0 = ys[bandStart]
+      const y1 = ys[i]
+      bandStart = -1
+      const first = rows.findIndex(r => center(r) > y0)
+      let last = rows.findIndex(r => center(r) >= y1)
+      if (last < 0) last = rows.length
+      if (first < 0 || first >= last) continue
+      // 上面的标题（中间可能隔着一行单位说明）
+      let top = first
+      for (let k = first - 1; k >= Math.max(0, first - 2); k--) {
+        if (taken.has(rows[k])) break
+        if (isCaptionRow(rows[k].text)) {
+          top = k
+          break
+        }
+      }
+      const end = notesEnd(last)
+      const parts: string[] = []
+      if (top < first) parts.push(rows.slice(top, first).map(r => r.text).join(' '))
+      parts.push(...rows.slice(first, last).map(r => r.text))
+      if (end > last) parts.push(...notesToText(rows.slice(last, end).map(r => r.text)).split('\n\n'))
+      figures.push(parts)
+      tops.push(rows[top].y0)
+      for (const r of rows.slice(top, end)) taken.add(r)
+    }
+  }
+
+  for (let c = 0; c < rows.length; c++) {
+    const caption = rows[c]
+    if (taken.has(caption) || !isCaptionRow(caption.text)) continue
+    // 图里的文字：标题上面紧挨着、不是正文的行
+    let top = c
+    while (top > 0 && !isBodyRow(rows[top - 1]) && !taken.has(rows[top - 1])) top--
+    // 没有横线的表格：标题下面不成句子的各行
+    let cells = c + 1
+    if (TABLE_CAPTION.test(caption.text)) {
+      while (cells < rows.length && !taken.has(rows[cells]) && !SENTENCE.test(rows[cells].text) && !NOTE_HEAD.test(rows[cells].text))
+        cells++
+    }
+    const end = notesEnd(cells)
     const label = rows.slice(top, c).map(r => r.text).join(' ')
     const parts: string[] = []
     if (label.trim()) parts.push(label)
     parts.push(caption.text)
-    if (end > c + 1) parts.push(...notesToText(rows.slice(c + 1, end).map(r => r.text)).split('\n\n'))
+    parts.push(...rows.slice(c + 1, cells).map(r => r.text))
+    if (end > cells) parts.push(...notesToText(rows.slice(cells, end).map(r => r.text)).split('\n\n'))
     figures.push(parts)
-    for (const r of rows.slice(top, end)) for (const l of r.lines) drop.add(l)
+    tops.push(rows[top].y0)
+    for (const r of rows.slice(top, end)) taken.add(r)
     c = end - 1
   }
-  if (!figures.length) return { body: lines, figures }
-  return { body: assignParagraphs(lines.filter(l => !drop.has(l))), figures }
+  if (!figures.length) return { body: lines, figures, tops }
+  const drop = new Set<OcrLine>()
+  for (const r of taken) for (const l of r.lines) drop.add(l)
+  return { body: assignParagraphs(lines.filter(l => !drop.has(l))), figures, tops }
 }
 
 /** 把行按段落拼回文字：段内换行，段落之间空一行（交给 ocrTextToParagraphs 整理） */
@@ -359,15 +427,23 @@ export function assignParagraphs(lines: RawLine[]): OcrLine[] {
     const gaps: number[] = []
     for (let i = 1; i < run.length; i++) gaps.push(run[i].y0 - run[i - 1].y1)
     const lineGap = gaps.length >= 2 ? Math.max(0, lowerMedian(gaps)) : lineHeight * 0.5
+    // 上一行是不是一段的第一行
+    let prevStarts = true
     run.forEach((l, i) => {
       const prev = run[i - 1]
-      if (!prev) para++
-      else {
+      let starts = !prev
+      if (prev) {
+        // 整段缩进的引文：首行缩进四个字，后面各行缩进两个字，一行行都比左边界靠右，
+        // 但只有比上一行更靠右才是新的一段；和上一行对齐时，上一行是首行才算新的一段（几段都只有一行）
         const indented = l.x0 > left + charWidth * 1.2
+        const deeper = l.x0 > prev.x0 + charWidth * 1.2
+        const aligned = Math.abs(l.x0 - prev.x0) <= charWidth * 0.6
         const prevShort = prev.x1 < right - charWidth * 1.5
         const farApart = l.y0 - prev.y1 > Math.max(lineGap * 2, lineHeight * 0.8)
-        if (indented || prevShort || farApart) para++
+        starts = (indented && (deeper || (aligned && prevStarts))) || prevShort || farApart
       }
+      if (starts) para++
+      prevStarts = starts
       out.push({ ...l, para })
     })
   }

@@ -236,6 +236,31 @@ describe('paragraphs from line positions', () => {
     ]).map(l => l.para)
     expect(paras).toEqual([0, 0, 1])
   })
+  it('keeps a block quote indented as a whole together (first line 4 chars in, the rest 2 chars in)', () => {
+    // 整段引文缩进两个字，原来每一行都被当成了新的一段（"价则或涨或" / "落，粜则……"）
+    const paras = assignParagraphs([
+      line(100, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(149, '引文的前一段到这里结束了：', 120, 560),
+      line(198, '粮价之涨落无定也。黄河一带口岸，如保德碛石之类', 248, 1010),
+      line(247, '下游之粜既闭，上游之来源亦塞，不得已又自行开禁，价则或涨或', 184, 1010),
+      line(296, '落，粜则时闭时开，商贾为之裹足，民食因之益困。以上各条皆古', 184, 1010),
+      line(345, '今未有之惨变，然不拔本塞源，恐后此之惨变更有甚于此前', 184, 1010),
+      line(394, '者矣。〔4〕', 184, 360),
+      line(443, '说明处于交易前沿的市场地带对粮食供求是极其敏感的。', 120, 900),
+      line(492, '粮食紧缺时价格上涨，一旦供应充足就会下跌。在辽州，光绪', 176),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 1, 1, 1, 1, 1, 2, 3])
+  })
+  it('consecutive one-line paragraphs that fill the line are still separate', () => {
+    const paras = assignParagraphs([
+      line(100, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
+      line(149, '第一段只有一行，写满了这一整行的文字，没有空出来的地方', 176),
+      line(198, '第二段也只有一行，写满了这一整行的文字，没有空出来的地', 176),
+      line(247, '第三段的第一行写满了这一整行的文字，没有空出来的地方啊', 176),
+      line(296, '第三段的第二行。', 120, 400),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 1, 2, 3, 3])
+  })
 })
 
 import { groupsToLines, type OcrBox } from '../src/ocr/layout'
