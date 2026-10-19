@@ -174,6 +174,7 @@ export function extendLoadedBook(id: string, content: BookContent) {
     pages: content.pages?.slice(),
     notes: content.notes?.slice(),
     quiet: content.quiet?.slice(),
+    captions: content.captions?.slice(),
   })
   const fresh = library.get().books.find(b => b.id === id)
   if (fresh) cached.meta = fresh

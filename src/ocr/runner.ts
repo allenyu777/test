@@ -19,7 +19,7 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
-import { dropMarginLines, linesToText, splitFootnotes } from './layout'
+import { dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
 import { findRuleLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
@@ -35,10 +35,11 @@ import {
 
 type Listener = (bookId: string) => void
 
-/** 识别出的一页：正文段落和页面下方的脚注 */
+/** 识别出的一页：正文段落、页面下方的脚注、插图和图表说明 */
 interface RecognizedPage {
   paragraphs: string[]
   notes: string[]
+  figures?: string[]
 }
 
 /**
@@ -59,7 +60,7 @@ export function rebuildOcrContent(content: BookContent, outline: OutlineItem[] =
   const placed = placeToc(content.blocks, fromOutline)
   fromOutline.splice(0, fromOutline.length, ...placed.toc)
   // 目录页、版权页、图表说明：只看不听，也不当作章节标题
-  const quiet = findQuietBlocks(content.blocks, content.notes)
+  const quiet = [...new Set([...findQuietBlocks(content.blocks, content.notes), ...(content.captions ?? [])])].sort((a, b) => a - b)
   if (quiet.length) content.quiet = quiet
   else delete content.quiet
   const hits = fromOutline.length ? [] : detectChapters(content.blocks, new Set([...(content.notes ?? []), ...quiet]))
@@ -110,12 +111,14 @@ export function appendPage(
   titles: string[] = [],
   joinable = true,
   notes: string[] = [],
+  figures: string[] = [],
 ) {
   content.pages ??= []
   const rest = paragraphs.slice()
-  const noteSet = new Set(content.notes)
+  // 上一页末尾的脚注、插图说明不算正文：跨页的半句话接到它们前面那一段
+  const skip = new Set([...(content.notes ?? []), ...(content.captions ?? [])])
   let last = content.blocks.length - 1
-  while (last >= 0 && noteSet.has(last)) last--
+  while (last >= 0 && skip.has(last)) last--
   if (
     joinable &&
     rest.length &&
@@ -129,6 +132,10 @@ export function appendPage(
   // 指向这一页上开始的第一段（接上去的半句话算上一页的段落）
   content.pages[page] = content.blocks.length
   content.blocks.push(...rest)
+  if (figures.length) {
+    content.captions ??= []
+    for (const figure of figures) content.captions.push(content.blocks.push(figure) - 1)
+  }
   if (notes.length) {
     content.notes ??= []
     for (const note of notes) content.notes.push(content.blocks.push(note) - 1)
@@ -320,14 +327,16 @@ class OcrRunner {
         if (!recognized) return
         const raw = recognized.paragraphs
         const notes = recognized.notes.map(t => normalizeText(t)).filter(Boolean)
+        const figures = (recognized.figures ?? []).map(t => normalizeText(t)).filter(Boolean)
         const titles = outline.filter(item => item.page === p).map(item => item.title)
         const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges.flat(), titles), titles)
           .map(t => normalizeText(t))
           .filter(Boolean)
         edges = [edgeKeys(raw), ...edges].slice(0, 4)
         const plate = isPlatePage(paragraphs)
-        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes)
-        prevIsText = paragraphs.length > 0 && !plate
+        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes, figures)
+        // 整页都是插图、图表说明时，下一页还可以接上前一页没说完的话
+        if (paragraphs.length || !figures.length) prevIsText = paragraphs.length > 0 && !plate
         rebuildOcrContent(content, outline)
 
         const finished = p + 1 >= ocr.pages
@@ -404,7 +413,12 @@ class OcrRunner {
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
         const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight, rules)
-        return { paragraphs: ocrTextToParagraphs(linesToText(body)), notes: ocrTextToParagraphs(notesToText(notes)) }
+        const { body: text, figures } = splitFigures(body)
+        return {
+          paragraphs: ocrTextToParagraphs(linesToText(text)),
+          notes: ocrTextToParagraphs(notesToText(notes)),
+          figures: figures.flatMap(parts => parts.flatMap(p => ocrTextToParagraphs(p))),
+        }
       }
       const { body, notes } = splitTrailingNotes(ocrTextToParagraphs(result.text))
       return { paragraphs: body, notes }
