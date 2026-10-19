@@ -192,14 +192,14 @@ export function speechText(text: string, skipNoteRefs = false): string {
 // 中文约 260 字/分钟，其它语言按字符约 900/分钟
 const charsPerMinute = (lang: string) => (lang === 'zh' || lang === 'ja' ? 260 : 900)
 
-/** 估算朗读时长（秒），rate 为倍速 */
-export function estimateSeconds(chars: number, lang: string, rate: number): number {
-  return (chars / charsPerMinute(lang)) * 60 / Math.max(0.1, rate)
+/** 估算朗读时长（秒），rate 为倍速；cpm：实际测到的朗读速度（1 倍速每分钟字数），没有就按语言估算 */
+export function estimateSeconds(chars: number, lang: string, rate: number, cpm?: number): number {
+  return (chars / (cpm || charsPerMinute(lang))) * 60 / Math.max(0.1, rate)
 }
 
 /** 估算若干秒能读多少字（estimateSeconds 的反过来） */
-export function charsForSeconds(seconds: number, lang: string, rate: number): number {
-  return (seconds / 60) * charsPerMinute(lang) * Math.max(0.1, rate)
+export function charsForSeconds(seconds: number, lang: string, rate: number, cpm?: number): number {
+  return (seconds / 60) * (cpm || charsPerMinute(lang)) * Math.max(0.1, rate)
 }
 
 export function formatDuration(seconds: number): string {

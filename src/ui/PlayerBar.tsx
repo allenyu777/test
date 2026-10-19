@@ -44,7 +44,7 @@ export function PlayerBar({ book, lang, onSheet, onNote, onPlayFrom }: Props) {
   const total = Math.max(1, book.charsBetween(range.start, range.end))
   const done = Math.min(total, book.charsBetween(range.start, pos.b) + pos.o)
   const value = drag ?? Math.round((done / total) * 1000)
-  const remaining = estimateSeconds(total - (drag != null ? (drag / 1000) * total : done), lang, rate)
+  const remaining = estimateSeconds(total - (drag != null ? (drag / 1000) * total : done), lang, rate, player.paceCpm())
 
   const seekTo = (v: number) => {
     const target = book.cum[range.start] + (v / 1000) * total

@@ -30,6 +30,8 @@ export interface EngineCallbacks {
   onResumedExternally?(): void
   /** 暂停太久，音频已经真正停下（锁屏控件可以关掉了） */
   onSuspended?(): void
+  /** 一段音频的字数和 1 倍速下的时长（秒），用来校准朗读速度 */
+  onTiming?(chars: number, seconds: number): void
 }
 
 export interface EngineOptions {

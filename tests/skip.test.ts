@@ -46,3 +46,21 @@ describe('skipping by time', () => {
     expect(book.skipChars(at(1), -100)).toEqual(at(1))
   })
 })
+
+import { paceOf, recordPace } from '../src/tts/pace'
+
+describe('calibrating the reading speed', () => {
+  it('learns each voice from real audio and uses it for estimates', () => {
+    expect(paceOf('azure:test')).toBeUndefined()
+    recordPace('azure:test', 330, 60)
+    expect(paceOf('azure:test')).toBeCloseTo(330)
+    recordPace('azure:test', 350, 60)
+    expect(paceOf('azure:test')).toBeCloseTo(334)
+    // 明显不对的数据不算
+    recordPace('azure:test', 5, 60)
+    recordPace('azure:test', 3000, 1)
+    expect(paceOf('azure:test')).toBeCloseTo(334)
+    expect(estimateSeconds(334, 'zh', 1, paceOf('azure:test'))).toBeCloseTo(60)
+    expect(charsForSeconds(15, 'zh', 2, 334)).toBeCloseTo(167)
+  })
+})
