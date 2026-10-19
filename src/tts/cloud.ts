@@ -181,6 +181,10 @@ export class CloudEngine implements Engine {
   /** 当前片段的音频是否已经放进 <audio>（下一段还在下载时为 false） */
   private attached = false
   private cache = new Map<string, Promise<Blob>>()
+  /** 检查"应该在播放"时音频是不是真的在播放 */
+  private watchdog: ReturnType<typeof setInterval> | null = null
+  private stuck = 0
+  private lastTime = -1
 
   constructor(
     private provider: CloudProvider,
@@ -198,6 +202,39 @@ export class CloudEngine implements Engine {
     const gen = this.gen
     this.prefetch()
     this.playNext(gen)
+    this.stuck = 0
+    this.watchdog = setInterval(() => this.ensurePlaying(), 1000)
+  }
+
+  /**
+   * 应该在播放却没有声音时（iOS 在后台、锁屏时可能拒绝或打断播放），重新让音频播放；
+   * 试了几次还不行，就把状态改成暂停，界面显示"播放"按钮，点一下就能继续（不会出现显示在播放、其实没声音）
+   */
+  ensurePlaying() {
+    if (!this.active || this.userPaused) return
+    const audio = mainAudio()
+    // 正在下载下一段，也没有播放静音：等下载完成
+    if (!this.attached && !audio.loop) return
+    if (audio.ended) return
+    const moving = !audio.paused && audio.currentTime !== this.lastTime
+    this.lastTime = audio.currentTime
+    // 正在播放、只是在缓冲：不算停住
+    if (moving || (!audio.paused && audio.readyState < 2)) {
+      this.stuck = 0
+      return
+    }
+    this.stuck++
+    const gen = this.gen
+    if (this.stuck <= 2) {
+      // 停住了：暂停一下再播放（和手动点暂停、播放的效果一样）
+      if (!audio.paused) audio.pause()
+      audio.play().catch(() => {})
+    } else if (gen === this.gen) {
+      this.stuck = 0
+      this.userPaused = true
+      audio.pause()
+      this.callbacks?.onPausedExternally?.()
+    }
   }
 
   private fetchSegment(segment: Segment): Promise<Blob> {
@@ -363,6 +400,8 @@ export class CloudEngine implements Engine {
   stop() {
     this.gen++
     this.active = false
+    if (this.watchdog) clearInterval(this.watchdog)
+    this.watchdog = null
     this.pending = []
     const audio = mainAudio()
     audio.onended = null
@@ -387,6 +426,8 @@ export class CloudEngine implements Engine {
     if (!this.active || !this.currentUrl) return false
     if (this.attached && audio.src !== this.currentUrl) return false
     this.userPaused = false
+    this.stuck = 0
+    this.lastTime = -1
     // 下一段还在下载：下载完成后 playNext 会自动开始播放
     if (!this.attached) return true
     audio.playbackRate = this.options?.rate ?? 1
