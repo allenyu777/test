@@ -1,7 +1,7 @@
 // 播放控制：把书、朗读引擎、进度保存、锁屏控件、定时关闭串起来
 import { Book, type Pos } from './core/book'
 import { trackListening } from './stats'
-import { charsForSeconds, cjkRatio, isSpeakable, speechText } from './core/text'
+import { charsForSeconds, cjkRatio, estimateSeconds, isSpeakable, speechText } from './core/text'
 import * as db from './db'
 import type { BookMeta, ChapterMark } from './db'
 import { coverUrl, library, patchBookLocal } from './library'
@@ -398,6 +398,7 @@ class Player {
       }
     }
     updateSettings({ rate: r })
+    this.updatePositionState()
     const applied = this.engine?.isActive() ? this.engine.setRate(r) : false
     if (this.state.status === 'playing' && !applied) this.startEngine(this.state.pos)
   }
@@ -671,6 +672,46 @@ class Player {
     this.rememberChapter(pos)
     this.store.set({ pos, percent: this.percentOf(pos), chapter })
     if (changedChapter) this.updateMetadata()
+    this.updatePositionState()
+  }
+
+  /** 本章的估计总时长和已读时长（秒），锁屏进度条按整章显示 */
+  chapterTime(pos = this.state.pos): { duration: number; position: number; start: number; end: number } | null {
+    const book = this.book
+    if (!book || !this.meta) return null
+    const { start, end } = book.chapterRange(pos.b)
+    const total = book.charsBetween(start, end)
+    const done = Math.min(total, book.charsBetween(start, pos.b) + pos.o)
+    const lang = this.meta.lang
+    const rate = this.state.rate
+    return { duration: estimateSeconds(total, lang, rate), position: estimateSeconds(done, lang, rate), start, end }
+  }
+
+  /**
+   * 告诉系统本章的总时长和当前位置：锁屏和控制中心显示整章的进度，
+   * 而不是正在播放的那一小段音频（云端语音一段只有一两句）
+   */
+  private updatePositionState() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    const ms = navigator.mediaSession as MediaSession & { setPositionState?: (state?: MediaPositionState) => void }
+    const t = this.chapterTime()
+    if (!ms.setPositionState || !t) return
+    const duration = Math.max(1, t.duration)
+    try {
+      ms.setPositionState({ duration, position: Math.min(t.position, duration), playbackRate: 1 })
+    } catch {
+      // 旧系统不支持
+    }
+  }
+
+  /** 锁屏进度条拖到本章的某个时间 */
+  private seekToTime(seconds: number) {
+    const book = this.book
+    const t = this.chapterTime()
+    if (!book || !t || !t.duration) return
+    const total = book.charsBetween(t.start, t.end)
+    const target = book.cum[t.start] + Math.min(1, Math.max(0, seconds / t.duration)) * total
+    this.seek(book.posAtChar(Math.min(target, book.cum[t.end] - 1)))
   }
 
   /** 进度百分比；扫描版还没识别完时按已识别页数占总页数的比例折算 */
@@ -692,6 +733,7 @@ class Player {
     else stopKeepAlive()
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = playing ? 'playing' : status === 'paused' ? 'paused' : 'none'
+      this.updatePositionState()
     }
   }
 
@@ -756,6 +798,13 @@ class Player {
       } catch {
         // 不支持的操作
       }
+    }
+    try {
+      ms.setActionHandler('seekto', details => {
+        if (details.seekTime != null) this.seekToTime(details.seekTime)
+      })
+    } catch {
+      // 不支持拖动进度条
     }
   }
 

@@ -27,7 +27,7 @@ export function makeWav(seconds: number, sampleRate = 8000): Blob {
 }
 
 let silentUrl: string | null = null
-function silent(): string {
+export function silent(): string {
   if (!silentUrl) silentUrl = URL.createObjectURL(makeWav(1))
   return silentUrl
 }

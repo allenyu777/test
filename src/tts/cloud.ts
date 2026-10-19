@@ -1,6 +1,6 @@
 // 云端神经语音：Azure 语音服务 / OpenAI 兼容接口
 // 合成好的音频用同一个 <audio> 连续播放，支持锁屏后台播放和倍速
-import { mainAudio } from './audio'
+import { mainAudio, silent } from './audio'
 import type { Engine, EngineCallbacks, EngineOptions, Segment, SegmentSource } from './engine'
 
 export interface CloudProvider {
@@ -35,6 +35,21 @@ function networkError(service: string, e: unknown): TtsError {
   return new TtsError(`${service}：无法连接，请检查网络或接口地址`, true)
 }
 
+/** 请求超时：网络切换（Wi-Fi ↔ 蜂窝）时请求可能一直挂着不返回 */
+const REQUEST_TIMEOUT = 25_000
+
+async function fetchWithTimeout(url: string, init: RequestInit, service: string): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (e) {
+    throw networkError(service, e)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 const xmlEscape = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 
@@ -48,9 +63,9 @@ export function azureProvider(key: string, region: string): CloudProvider {
       const ssml =
         `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${locale}">` +
         `<voice name="${xmlEscape(voice)}">${body}</voice></speak>`
-      let res: Response
-      try {
-        res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(
+        endpoint,
+        {
           method: 'POST',
           headers: {
             'Ocp-Apim-Subscription-Key': key.trim(),
@@ -58,12 +73,15 @@ export function azureProvider(key: string, region: string): CloudProvider {
             'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
           },
           body: ssml,
-        })
+        },
+        'Azure',
+      )
+      if (!res.ok) throw await httpError(res, 'Azure')
+      try {
+        return await res.blob()
       } catch (e) {
         throw networkError('Azure', e)
       }
-      if (!res.ok) throw await httpError(res, 'Azure')
-      return res.blob()
     },
   }
 }
@@ -92,27 +110,48 @@ export function openaiProvider(cfg: OpenAIConfig): CloudProvider {
     async synthesize(text, voice) {
       const payload: Record<string, unknown> = { model: cfg.model, voice, input: text, response_format: 'mp3' }
       if (cfg.instructions && /gpt-4o/i.test(cfg.model)) payload.instructions = cfg.instructions
-      let res: Response
-      try {
-        res = await fetch(`${base}/audio/speech`, {
+      const res = await fetchWithTimeout(
+        `${base}/audio/speech`,
+        {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(cfg.key ? { Authorization: `Bearer ${cfg.key.trim()}` } : {}),
           },
           body: JSON.stringify(payload),
-        })
+        },
+        'OpenAI',
+      )
+      if (!res.ok) throw await httpError(res, 'OpenAI')
+      try {
+        return await res.blob()
       } catch (e) {
         throw networkError('OpenAI', e)
       }
-      if (!res.ok) throw await httpError(res, 'OpenAI')
-      return res.blob()
     },
   }
 }
 
-const PREFETCH = 3
+const PREFETCH = 4
 const CACHE_SIZE = 40
+/** 网络出错后每次重试前等待的时间；断网时先等网络恢复 */
+const RETRY_DELAYS = [1500, 3000, 5000, 8000, 12000]
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+/** 断网时等网络恢复（最多 max 毫秒） */
+function waitOnline(max: number): Promise<void> {
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return Promise.resolve()
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer)
+      window.removeEventListener('online', done)
+      resolve()
+    }
+    const timer = setTimeout(done, max)
+    window.addEventListener('online', done)
+  })
+}
 
 /** 句子在音频中所占的大致时长权重 */
 function weight(text: string): number {
@@ -165,12 +204,18 @@ export class CloudEngine implements Engine {
     const key = `${opts.voiceId}|${segment.text}`
     let p = this.cache.get(key)
     if (!p) {
-      const attempt = () => this.provider.synthesize(segment.text, opts.voiceId, opts.lang)
-      p = attempt().catch(async (e: unknown) => {
-        if (e instanceof TtsError && !e.retryable) throw e
-        await new Promise(r => setTimeout(r, 1500))
-        return attempt()
-      })
+      // 网络问题（断网、超时、服务繁忙）多试几次，不要一出错就暂停
+      p = (async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await this.provider.synthesize(segment.text, opts.voiceId, opts.lang)
+          } catch (e) {
+            if ((e instanceof TtsError && !e.retryable) || attempt >= RETRY_DELAYS.length) throw e
+            await waitOnline(60_000)
+            await sleep(RETRY_DELAYS[attempt])
+          }
+        }
+      })()
       p.catch(() => this.cache.delete(key))
       this.cache.set(key, p)
       if (this.cache.size > CACHE_SIZE) this.cache.delete(this.cache.keys().next().value!)
@@ -203,13 +248,18 @@ export class CloudEngine implements Engine {
     this.prefetch()
     this.lastIndex = 0
     this.callbacks?.onSentence(item.segment.sentences[0].pos)
-    const slow = setTimeout(() => gen === this.gen && this.callbacks?.onLoading?.(true), 400)
+    const slow = setTimeout(() => {
+      if (gen !== this.gen) return
+      this.callbacks?.onLoading?.(true)
+      this.fillGap()
+    }, 400)
     let blob: Blob
     try {
       blob = await item.blob
     } catch (e) {
       clearTimeout(slow)
       if (gen !== this.gen) return
+      this.stopGap()
       this.callbacks?.onLoading?.(false)
       this.active = false
       this.callbacks?.onError(e instanceof Error ? e.message : String(e))
@@ -220,6 +270,7 @@ export class CloudEngine implements Engine {
     this.callbacks?.onLoading?.(false)
 
     const audio = mainAudio()
+    audio.loop = false
     const url = URL.createObjectURL(blob)
     if (this.currentUrl) URL.revokeObjectURL(this.currentUrl)
     this.currentUrl = url
@@ -245,6 +296,28 @@ export class CloudEngine implements Engine {
       this.active = false
       this.callbacks?.onError(name === 'NotAllowedError' ? '浏览器阻止了自动播放，请再点一次播放' : '音频播放失败')
     }
+  }
+
+  /**
+   * 下一段还在下载时先播放静音：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读
+   */
+  private fillGap() {
+    if (this.userPaused) return
+    const audio = mainAudio()
+    audio.onended = null
+    audio.ontimeupdate = null
+    audio.onerror = null
+    audio.onpause = null
+    audio.loop = true
+    audio.src = silent()
+    audio.play().catch(() => {})
+  }
+
+  private stopGap() {
+    const audio = mainAudio()
+    if (!audio.loop) return
+    audio.loop = false
+    audio.pause()
   }
 
   private track(gen: number, segment: Segment) {
@@ -279,6 +352,7 @@ export class CloudEngine implements Engine {
     audio.ontimeupdate = null
     audio.onerror = null
     audio.onpause = null
+    audio.loop = false
     audio.pause()
   }
 
