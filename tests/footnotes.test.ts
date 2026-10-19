@@ -6,11 +6,19 @@ import { appendPage } from '../src/ocr/runner'
 import { assignParagraphs, splitFootnotes, type OcrLine } from '../src/ocr/layout'
 import { ocrTextToParagraphs } from '../src/ocr/text'
 import { linesToText } from '../src/ocr/layout'
-import { notesToText, splitTrailingNotes, stripNoteRefs } from '../src/parsers/notes'
+import { noteRefRanges, notesToText, splitTrailingNotes, stripNoteRefs } from '../src/parsers/notes'
 import { linesToParagraphs } from '../src/parsers/pdf'
 import page from './fixtures/ocr-footnotes.json'
 
 describe('note numbers in the text', () => {
+  it('are found for showing as small superscripts, with the stray space before the punctuation', () => {
+    const text = '易钱九百余文”〔3〕 。“省北……七百”[5〕 。降至一千二百左右。(2]'
+    const refs = noteRefRanges(text).map(([a, b]) => text.slice(a, b))
+    expect(refs).toEqual(['〔3〕 ', '[5〕 ', '(2]'])
+    // 段首的编号、列举不算
+    expect(noteRefRanges('〔1〕民国《临县志》。')).toEqual([])
+    expect(noteRefRanges('一为市场：（1）农业，（2）商业')).toEqual([])
+  })
   it('are not read aloud', () => {
     expect(stripNoteRefs('村秋旱伤稼”〔7〕。崞县')).toBe('村秋旱伤稼”。崞县')
     // 识别时括号常认错一半
