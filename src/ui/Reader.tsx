@@ -152,6 +152,7 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
   // 扫描版识别进度（识别出新页面时重新渲染正文）
   const ocr = useStore(library, s => s.books.find(b => b.id === meta.id)?.ocr ?? null)
   const ocrDone = ocr?.done ?? 0
+  const finished = useStore(library, s => s.books.find(b => b.id === meta.id)?.finished ?? false)
   const [section, setSection] = useState(() => book.sectionIndex(player.state.pos.b))
   const [following, setFollowing] = useState(true)
   const [sheet, setSheet] = useState<SheetState>(null)
@@ -545,7 +546,23 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
               <IconChevronRight size={16} />
             </button>
           ) : ocr && ocr.status !== 'done' ? null : (
-            <span class="muted small">— 全书完 —</span>
+            <div class="book-end">
+              <span class="muted small">— 全书完 —</span>
+              {finished ? (
+                <span class="muted small">已归到书架的「已读完」</span>
+              ) : (
+                <button
+                  class="chip"
+                  onClick={async e => {
+                    e.stopPropagation()
+                    await player.setFinished(meta.id, true)
+                    toast('已归到「已读完」')
+                  }}
+                >
+                  标记为已读完
+                </button>
+              )}
+            </div>
           )}
         </div>
         {ocr && ocr.status !== 'done' && !nextSec && (

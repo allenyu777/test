@@ -64,6 +64,7 @@ function percentLabel(meta: BookMeta) {
 export function Library() {
   const { books, loaded, importing } = useStore(library, s => s)
   const sort = useStore(settings, s => s.sort)
+  const shelf = useStore(settings, s => s.shelf)
   const view = useStore(settings, s => s.libraryView)
   const playerBookId = useStore(player.store, s => s.bookId)
   const status = useStore(player.store, s => s.status)
@@ -86,7 +87,10 @@ export function Library() {
 
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const list = books.filter(b => !q || b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))
+    // 搜索时在全部书里找，不分在读、已读完
+    const list = books.filter(b =>
+      q ? b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) : shelf === 'finished' ? b.finished : !b.finished,
+    )
     const by: Record<string, (a: BookMeta, b: BookMeta) => number> = {
       recent: (a, b) => (b.lastReadAt || b.addedAt / 1e3) - (a.lastReadAt || a.addedAt / 1e3),
       added: (a, b) => b.addedAt - a.addedAt,
@@ -94,16 +98,18 @@ export function Library() {
       progress: (a, b) => b.percent - a.percent,
     }
     return [...list].sort(by[sort] ?? by.recent)
-  }, [books, sort, query])
+  }, [books, sort, query, shelf])
+  const finishedCount = books.filter(b => b.finished).length
 
   // "继续收听"：正在播放的书，否则最近听过的书
   const hero = useMemo(() => {
     if (playerBookId) {
       const current = books.find(b => b.id === playerBookId)
-      if (current) return current
+      // 已读完的书只在正在播放时显示在这里
+      if (current && (!current.finished || status === 'playing')) return current
     }
     return [...books].filter(b => b.lastReadAt && !b.finished).sort((a, b) => b.lastReadAt - a.lastReadAt)[0] ?? null
-  }, [books, playerBookId])
+  }, [books, playerBookId, status])
 
   // 预先加载"继续收听"的书，这样点击播放时可以在同一次点击里立即出声（iOS 的要求）
   const heroBook = useRef<{ meta: BookMeta; book: Book } | null>(null)
@@ -244,6 +250,14 @@ export function Library() {
               <input value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} placeholder="搜索书名或作者" />
             </label>
           )}
+          <div class="seg shelf-tabs" role="tablist">
+            <button role="tab" class={shelf === 'reading' ? 'active' : ''} onClick={() => updateSettings({ shelf: 'reading' })}>
+              在读 {books.length - finishedCount}
+            </button>
+            <button role="tab" class={shelf === 'finished' ? 'active' : ''} onClick={() => updateSettings({ shelf: 'finished' })}>
+              已读完 {finishedCount}
+            </button>
+          </div>
           <div class="toolbar">
             {(
               [
@@ -270,6 +284,15 @@ export function Library() {
       )}
 
       {loaded && !books.length && <EmptyState onImport={() => fileRef.current?.click()} />}
+      {books.length > 0 && !sorted.length && (
+        <div class="hint" style={{ textAlign: 'center' }}>
+          {query.trim()
+            ? '没有找到这本书'
+            : shelf === 'finished'
+              ? '还没有读完的书。读到全书结尾会自动归到这里，也可以在书的「⋯」菜单里选「标记为已读完」'
+              : '所有书都读完了 🎉'}
+        </div>
+      )}
 
       {view === 'grid' ? (
         <div class="grid">
@@ -540,6 +563,7 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
                 player.clearChapterMarks(meta.id)
                 player.seek({ b: 0, o: 0 }, false)
               }
+              await player.setFinished(meta.id, false)
               await updateBookMeta(meta.id, { pos: { b: 0, o: 0 }, percent: 0, finished: false, lastReadAt: 0, chapterPos: {} })
               onClose()
             }}
@@ -547,17 +571,16 @@ function BookMenu({ meta, onClose }: { meta: BookMeta; onClose: () => void }) {
             从头开始
           </button>
         )}
-        {!meta.finished && (
-          <button
-            class="option"
-            onClick={async () => {
-              await updateBookMeta(meta.id, { finished: true })
-              onClose()
-            }}
-          >
-            标记为已读完
-          </button>
-        )}
+        <button
+          class="option"
+          onClick={async () => {
+            await player.setFinished(meta.id, !meta.finished)
+            toast(meta.finished ? '已移回「在读」' : '已归到「已读完」')
+            onClose()
+          }}
+        >
+          {meta.finished ? '移回在读' : '标记为已读完'}
+        </button>
         <button class="option danger" onClick={remove}>
           删除这本书
         </button>

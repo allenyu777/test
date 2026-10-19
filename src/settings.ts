@@ -35,6 +35,8 @@ export interface Settings {
   /** 写完笔记后自动继续播放 */
   resumeAfterNote: boolean
   sort: 'recent' | 'added' | 'title' | 'progress'
+  /** 书架显示"在读"还是"已读完"的书 */
+  shelf: 'reading' | 'finished'
   libraryView: 'grid' | 'list'
   /** 语速调节记忆到每本书 */
   perBookRate: boolean
@@ -69,6 +71,7 @@ export const DEFAULT_SETTINGS: Settings = {
   transcribe: 'off',
   resumeAfterNote: true,
   sort: 'recent',
+  shelf: 'reading',
   libraryView: 'grid',
   perBookRate: true,
   readNotes: false,

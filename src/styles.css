@@ -1659,6 +1659,17 @@ a {
 }
 
 /* 声音 */
+.book-end {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.shelf-tabs {
+  margin: 18px 0 0;
+}
+
 .seg {
   display: flex;
   padding: 3px;
