@@ -504,6 +504,7 @@ class Player {
     const engine = this.getEngine()
     if (this.engine && this.engine !== engine) this.engine.stop()
     this.engine = engine
+    this.syncMediaHandlers()
     // "读完本章"始终指向开始朗读位置所在的章节（往前或往后跳章都会重新计算）
     if (this.chapterTimer != null) this.chapterTimer = start.b
     const source = createSource(book, start, engine.maxChars, () => this.stopBlock())
@@ -524,6 +525,9 @@ class Player {
           this.setStatus('paused')
           this.saveNow()
         }
+      },
+      onResumedExternally: () => {
+        if (this.engine === engine && this.state.status !== 'playing') this.setStatus('playing')
       },
     }
     this.setPos(start)
@@ -783,10 +787,8 @@ class Player {
   private setupMediaSession() {
     if (!('mediaSession' in navigator)) return
     const ms = navigator.mediaSession
+    this.syncMediaHandlers()
     const handlers: [MediaSessionAction, () => void][] = [
-      ['play', () => this.play()],
-      ['pause', () => this.pause()],
-      ['stop', () => this.pause()],
       ['previoustrack', () => this.skip(-1)],
       ['nexttrack', () => this.skip(1)],
       ['seekbackward', () => this.skipBy(-1)],
@@ -805,6 +807,27 @@ class Player {
       })
     } catch {
       // 不支持拖动进度条
+    }
+  }
+
+  /**
+   * 锁屏控件的播放 / 暂停：云端语音交给系统直接控制 <audio>（暂停后页面被 iOS 挂起时也能马上继续），
+   * 由音频的 play / pause 事件同步状态；系统语音只能由页面来读，用自己的处理函数
+   */
+  private syncMediaHandlers() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    const native = !!this.engine?.nativeControls
+    const actions: [MediaSessionAction, (() => void) | null][] = [
+      ['play', native ? null : () => this.play()],
+      ['pause', native ? null : () => this.pause()],
+      ['stop', native ? null : () => this.pause()],
+    ]
+    for (const [action, fn] of actions) {
+      try {
+        navigator.mediaSession.setActionHandler(action, fn)
+      } catch {
+        // 不支持的操作
+      }
     }
   }
 

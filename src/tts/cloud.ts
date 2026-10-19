@@ -167,6 +167,7 @@ function weight(text: string): number {
 
 export class CloudEngine implements Engine {
   readonly kind = 'cloud'
+  readonly nativeControls = true
   private gen = 0
   private pending: { segment: Segment; blob: Promise<Blob> }[] = []
   private source: SegmentSource | null = null
@@ -278,9 +279,7 @@ export class CloudEngine implements Engine {
     audio.onended = () => gen === this.gen && this.playNext(gen)
     audio.ontimeupdate = () => this.track(gen, item.segment)
     audio.onerror = () => gen === this.gen && this.playNext(gen)
-    audio.onpause = () => {
-      if (gen === this.gen && !this.userPaused && !audio.ended && this.active) this.callbacks?.onPausedExternally?.()
-    }
+    this.listenExternal(gen)
     audio.src = url
     this.attached = true
     audio.defaultPlaybackRate = rate
@@ -307,10 +306,28 @@ export class CloudEngine implements Engine {
     audio.onended = null
     audio.ontimeupdate = null
     audio.onerror = null
-    audio.onpause = null
+    this.listenExternal(this.gen)
     audio.loop = true
     audio.src = silent()
     audio.play().catch(() => {})
+  }
+
+  /**
+   * 锁屏控件、耳机、来电让音频暂停或继续时（系统直接控制 <audio>）同步播放状态。
+   * 换音频地址时也可能触发 pause 事件，那时已经接着在播放（audio.paused 为 false），不算暂停
+   */
+  private listenExternal(gen: number) {
+    const audio = mainAudio()
+    audio.onpause = () => {
+      if (gen !== this.gen || !this.active || audio.ended || !audio.paused || this.userPaused) return
+      this.userPaused = true
+      this.callbacks?.onPausedExternally?.()
+    }
+    audio.onplay = () => {
+      if (gen !== this.gen || !this.active || !this.userPaused) return
+      this.userPaused = false
+      this.callbacks?.onResumedExternally?.()
+    }
   }
 
   private stopGap() {
@@ -352,6 +369,7 @@ export class CloudEngine implements Engine {
     audio.ontimeupdate = null
     audio.onerror = null
     audio.onpause = null
+    audio.onplay = null
     audio.loop = false
     audio.pause()
   }
