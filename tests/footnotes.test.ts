@@ -141,6 +141,12 @@ describe('listening skips footnotes', () => {
     expect(book.sentenceText({ b: 0, o: 0 })).toContain('高涨，饥民遍野。')
     expect(book.totalChars).toBe(content.blocks.join('').length)
   })
+  it('a table stays where it was on the page, between the body paragraphs around it', () => {
+    const content: BookContent = { id: 'b', blocks: ['上一页。'], heads: {}, toc: [], sections: [], pages: [0] }
+    appendPage(content, 1, ['表格前面的话。', '表格后面的话。'], [], true, [], ['表2-4 统计表', '1875 1 永宁'], [1, 1])
+    expect(content.blocks).toEqual(['上一页。', '表格前面的话。', '表2-4 统计表', '1875 1 永宁', '表格后面的话。'])
+    expect(content.captions).toEqual([2, 3])
+  })
 })
 
 import { findRuleLines } from '../src/ocr/rules'
@@ -229,5 +235,56 @@ describe('figures and figure notes on a scanned page (real PaddleOCR result, p. 
   it('a sentence that merely mentions a figure is not a caption', () => {
     const row = { ...lines[lines.length - 1], text: '图2-4显示，光绪三年粮价暴涨了数倍。', x0: 120, x1: 1490 }
     expect(splitFigures([row]).figures).toEqual([])
+  })
+})
+
+import tablePage from './fixtures/ocr-table-page.json'
+import { findTableLines } from '../src/ocr/rules'
+
+describe('tables on a scanned page (real PaddleOCR result, p. 100)', () => {
+  // 测试图片是拼出来的：表格下面贴了另一页的正文（去掉那一页的页眉）
+  const lines = dropMarginLines(tablePage.lines as OcrLine[], tablePage.pageHeight).filter(l => !l.text.startsWith('第一章'))
+  // 表格的横线：标题下、每一行之间、表格底边
+  const ruled = [328, 404, 478, 560, 703, 978, 1065].map(y => ({ y, x0: 170, x1: 1480 }))
+  const texts = (ls: OcrLine[]) => ls.map(l => l.text.slice(0, 4))
+
+  it('every cell between the ruled lines is skipped, with the caption above', () => {
+    const { body, figures } = splitFigures(lines, ruled)
+    expect(figures).toHaveLength(1)
+    expect(figures[0][0]).toMatch(/^表2-4/)
+    expect(figures[0].join(' ')).toContain('安邑、左云')
+    expect(figures[0].join(' ')).toContain('楼、静乐')
+    expect(texts(body)).toEqual(texts(lines.filter(l => l.y0 > 1300)))
+    expect(body.length).toBeGreaterThan(0)
+  })
+  it('without the ruled lines, rows under a table caption that are not sentences are the table', () => {
+    const { body, figures } = splitFigures(lines)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].join(' ')).toContain('安邑、左云')
+    expect(texts(body)).toEqual(texts(lines.filter(l => l.y0 > 1300)))
+  })
+  it('a header rule above body text does not turn the body into a table', () => {
+    const prose = lines.filter(l => l.y0 > 1300)
+    const { body, figures } = splitFigures(prose, [{ y: 1300, x0: 60, x1: 1440 }, { y: 2100, x0: 60, x1: 1440 }])
+    expect(figures).toEqual([])
+    expect(body).toHaveLength(prose.length)
+  })
+})
+
+describe('finding table lines in the page image', () => {
+  const W = 400
+  const H = 300
+  const img = () => ({ data: new Uint8ClampedArray(W * H * 4).fill(255), width: W, height: H })
+  const fill = (im: ReturnType<typeof img>, x0: number, x1: number, y0: number, y1: number) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) im.data.fill(0, (y * W + x) * 4, (y * W + x) * 4 + 3)
+  }
+  it('finds long thin lines and ignores text and short rules', () => {
+    const im = img()
+    fill(im, 20, 380, 50, 52) // 表格边框
+    fill(im, 20, 380, 120, 121)
+    fill(im, 20, 100, 200, 201) // 脚注线
+    for (let x = 20; x < 380; x += 12) fill(im, x, x + 8, 80, 95) // 一行字
+    fill(im, 20, 380, 250, 290) // 色块
+    expect(findTableLines(im, 0, W).map(l => l.y)).toEqual([51, 120])
   })
 })

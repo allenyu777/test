@@ -20,7 +20,7 @@ import {
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
 import { dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
-import { findRuleLines, type RuleLine } from './rules'
+import { findRuleLines, findTableLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
   continuesAcrossPage,
@@ -40,6 +40,7 @@ interface RecognizedPage {
   paragraphs: string[]
   notes: string[]
   figures?: string[]
+  figureAt?: number[]
 }
 
 /**
@@ -112,33 +113,59 @@ export function appendPage(
   joinable = true,
   notes: string[] = [],
   figures: string[] = [],
+  /** 每段插图、表格文字放在第几段正文前面（不给就放在这一页最后） */
+  figureAt: number[] = [],
 ) {
   content.pages ??= []
-  const rest = paragraphs.slice()
   // 上一页末尾的脚注、插图说明不算正文：跨页的半句话接到它们前面那一段
   const skip = new Set([...(content.notes ?? []), ...(content.captions ?? [])])
   let last = content.blocks.length - 1
   while (last >= 0 && skip.has(last)) last--
-  if (
+  const joined =
     joinable &&
-    rest.length &&
+    paragraphs.length > 0 &&
     last >= 0 &&
     content.heads[last] == null &&
-    !titles.includes(rest[0]) &&
-    continuesAcrossPage(content.blocks[last], rest[0])
-  ) {
-    content.blocks[last] = joinLines([content.blocks[last], rest.shift()!])
-  }
+    !titles.includes(paragraphs[0]) &&
+    continuesAcrossPage(content.blocks[last], paragraphs[0])
+  if (joined) content.blocks[last] = joinLines([content.blocks[last], paragraphs[0]])
   // 指向这一页上开始的第一段（接上去的半句话算上一页的段落）
   content.pages[page] = content.blocks.length
-  content.blocks.push(...rest)
-  if (figures.length) {
-    content.captions ??= []
-    for (const figure of figures) content.captions.push(content.blocks.push(figure) - 1)
+  const at = figures.map((_, k) => Math.min(paragraphs.length, Math.max(0, figureAt[k] ?? paragraphs.length)))
+  for (let i = 0; i <= paragraphs.length; i++) {
+    figures.forEach((figure, k) => {
+      if (at[k] !== i) return
+      content.captions ??= []
+      content.captions.push(content.blocks.push(figure) - 1)
+    })
+    if (i < paragraphs.length && !(i === 0 && joined)) content.blocks.push(paragraphs[i])
   }
   if (notes.length) {
     content.notes ??= []
     for (const note of notes) content.notes.push(content.blocks.push(note) - 1)
+  }
+}
+
+/**
+ * 识别结果里"放在第 at 段前面"换算到去掉页眉、拆出标题之后的段落：
+ * 找原来第 at 段在整理后的位置，找不到就按少掉的段数往前挪。
+ */
+function placeAfterCleanup(raw: string[], paragraphs: string[], at: number | undefined): number {
+  if (at == null || at >= raw.length) return paragraphs.length
+  const anchor = normalizeText(raw[at])
+  const found = paragraphs.findIndex(p => p === anchor || (anchor.length >= 4 && (p.endsWith(anchor) || anchor.endsWith(p))))
+  if (found >= 0) return found
+  return Math.max(0, Math.min(paragraphs.length, at - (raw.length - paragraphs.length)))
+}
+
+/** 整页的长横线（表格的边框） */
+function pageTableLines(canvas: HTMLCanvasElement): RuleLine[] {
+  try {
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return []
+    return findTableLines(ctx.getImageData(0, 0, canvas.width, canvas.height), 0, canvas.width)
+  } catch {
+    return []
   }
 }
 
@@ -327,14 +354,16 @@ class OcrRunner {
         if (!recognized) return
         const raw = recognized.paragraphs
         const notes = recognized.notes.map(t => normalizeText(t)).filter(Boolean)
-        const figures = (recognized.figures ?? []).map(t => normalizeText(t)).filter(Boolean)
+        const figureList = (recognized.figures ?? []).map((t, k) => ({ text: normalizeText(t), at: recognized.figureAt?.[k] }))
         const titles = outline.filter(item => item.page === p).map(item => item.title)
         const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges.flat(), titles), titles)
           .map(t => normalizeText(t))
           .filter(Boolean)
         edges = [edgeKeys(raw), ...edges].slice(0, 4)
         const plate = isPlatePage(paragraphs)
-        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes, figures)
+        const figures = figureList.filter(f => f.text)
+        const figureAt = figures.map(f => placeAfterCleanup(raw, paragraphs, f.at))
+        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes, figures.map(f => f.text), figureAt)
         // 整页都是插图、图表说明时，下一页还可以接上前一页没说完的话
         if (paragraphs.length || !figures.length) prevIsText = paragraphs.length > 0 && !plate
         rebuildOcrContent(content, outline)
@@ -409,15 +438,27 @@ class OcrRunner {
       const pageHeight = canvas.height
       // 识别前先在图片上找脚注线（识别时画布的内容可能被交给后台线程）
       const rules = ocr.engine === 'cloud' ? [] : pageRuleLines(canvas)
+      const tableLines = ocr.engine === 'cloud' ? [] : pageTableLines(canvas)
       const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
         const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight, rules)
-        const { body: text, figures } = splitFigures(body)
+        const { body: text, figures, tops } = splitFigures(body, tableLines)
+        const figureTexts: string[] = []
+        const figureAt: number[] = []
+        figures.forEach((parts, k) => {
+          // 放在页面上它上面的那些正文后面
+          const at = ocrTextToParagraphs(linesToText(text.filter(l => l.y1 <= tops[k]))).length
+          for (const p of parts.flatMap(part => ocrTextToParagraphs(part))) {
+            figureTexts.push(p)
+            figureAt.push(at)
+          }
+        })
         return {
           paragraphs: ocrTextToParagraphs(linesToText(text)),
           notes: ocrTextToParagraphs(notesToText(notes)),
-          figures: figures.flatMap(parts => parts.flatMap(p => ocrTextToParagraphs(p))),
+          figures: figureTexts,
+          figureAt,
         }
       }
       const { body, notes } = splitTrailingNotes(ocrTextToParagraphs(result.text))
