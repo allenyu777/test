@@ -69,3 +69,17 @@ describe('DOCX', () => {
     expect(finalizeBook('x', parsed).blocks.length).toBe(1)
   })
 })
+
+import { makeWav } from '../src/tts/audio'
+
+describe('silence used to keep audio alive', () => {
+  it('is truly silent 16-bit PCM', async () => {
+    const blob = makeWav(5)
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const view = new DataView(bytes.buffer)
+    expect(String.fromCharCode(...bytes.slice(0, 4))).toBe('RIFF')
+    expect(view.getUint16(34, true)).toBe(16)
+    expect(view.getUint32(40, true)).toBe(5 * 8000 * 2)
+    expect(bytes.slice(44).every(b => b === 0)).toBe(true)
+  })
+})

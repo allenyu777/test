@@ -137,8 +137,8 @@ const CACHE_SIZE = 40
 /** 网络出错后每次重试前等待的时间；断网时先等网络恢复 */
 const RETRY_DELAYS = [1500, 3000, 5000, 8000, 12000]
 
-/** 暂停后用静音占着音频的最长时间（之后才真正停下，省电） */
-const SOFT_PAUSE_MS = 30 * 60_000
+/** 暂停后用静音占着音频的最长时间（之后真正停下、关掉锁屏控件，省电） */
+const SOFT_PAUSE_MS = 5 * 60_000
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -366,7 +366,7 @@ export class CloudEngine implements Engine {
    * 播放循环的静音。
    * 下一段还在下载时（paused = false）：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读。
    * 暂停时（paused = true）：iOS 上的网页应用暂停一会儿后，系统会收回它的音频，锁屏控件上点播放就没有反应了
-   * （WebKit 的已知问题），所以暂停时用静音"占着"音频，锁屏上随时能继续；暂停太久（30 分钟）才真正停下
+   * （WebKit 的已知问题），所以暂停时用静音"占着"音频，锁屏上随时能继续；暂停超过 5 分钟才真正停下，并收起锁屏控件
    */
   private playSilence(paused: boolean) {
     const audio = mainAudio()
@@ -474,7 +474,14 @@ export class CloudEngine implements Engine {
     this.clearSoftPause()
     this.softTimer = setTimeout(() => {
       this.softTimer = null
-      if (this.userPaused) this.stopSilence()
+      if (!this.userPaused) return
+      // 真正停下：卸掉音频，iOS 会把锁屏上的播放控件收起来；继续时 resume 会把这一段重新放回去
+      const audio = mainAudio()
+      audio.loop = false
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+      this.callbacks?.onSuspended?.()
     }, SOFT_PAUSE_MS)
     return true
   }
