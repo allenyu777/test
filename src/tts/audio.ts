@@ -32,6 +32,20 @@ export function silent(): string {
   return silentUrl
 }
 
+/**
+ * 告诉 iOS 这是媒体播放（Safari 的 navigator.audioSession，iOS 17 起支持）：
+ * 锁屏、静音开关、其它 App 的声音都按播放器的方式处理
+ */
+export function setPlaybackSession() {
+  const session = (typeof navigator !== 'undefined' ? (navigator as Navigator & { audioSession?: { type: string } }).audioSession : undefined)
+  if (!session || session.type === 'playback') return
+  try {
+    session.type = 'playback'
+  } catch {
+    // 不支持
+  }
+}
+
 let main: HTMLAudioElement | null = null
 
 /** 云端语音使用的播放器（全程复用同一个元素，iOS 才允许后台连续播放） */

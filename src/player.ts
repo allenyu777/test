@@ -8,7 +8,7 @@ import { coverUrl, library, patchBookLocal } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
 import { createStore } from './store'
-import { primeAudio, setWakeLock, startKeepAlive, stopKeepAlive } from './tts/audio'
+import { primeAudio, setPlaybackSession, setWakeLock, startKeepAlive, stopKeepAlive } from './tts/audio'
 import { CloudEngine, azureProvider, openaiProvider } from './tts/cloud'
 import type { Engine, EngineCallbacks, Segment, SegmentSource } from './tts/engine'
 import { SystemEngine } from './tts/system'
@@ -505,6 +505,7 @@ class Player {
     if (this.engine && this.engine !== engine) this.engine.stop()
     this.engine = engine
     this.syncMediaHandlers()
+    setPlaybackSession()
     // "读完本章"始终指向开始朗读位置所在的章节（往前或往后跳章都会重新计算）
     if (this.chapterTimer != null) this.chapterTimer = start.b
     const source = createSource(book, start, engine.maxChars, () => this.stopBlock())
@@ -781,6 +782,7 @@ class Player {
         // 回到前台时如果朗读已经中断，从当前句继续
         if (this.state.status === 'playing' && engine.isStalled()) this.startEngine(this.state.pos)
       }
+      setPlaybackSession()
       // 云端语音：回到前台时马上检查是不是真的在播放
       if (engine instanceof CloudEngine && this.state.status === 'playing') engine.ensurePlaying()
     }
@@ -813,16 +815,15 @@ class Player {
   }
 
   /**
-   * 锁屏控件的播放 / 暂停：云端语音交给系统直接控制 <audio>（暂停后页面被 iOS 挂起时也能马上继续），
-   * 由音频的 play / pause 事件同步状态；系统语音只能由页面来读，用自己的处理函数
+   * 锁屏控件、耳机的播放 / 暂停。云端语音暂停时会用静音占着音频（见 CloudEngine.pause），页面不会被挂起，
+   * 这里的代码能马上执行。锁屏上显示的按钮可能和实际状态不一致，所以按"切换"处理
    */
   private syncMediaHandlers() {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
-    const native = !!this.engine?.nativeControls
-    const actions: [MediaSessionAction, (() => void) | null][] = [
-      ['play', native ? null : () => this.play()],
-      ['pause', native ? null : () => this.pause()],
-      ['stop', native ? null : () => this.pause()],
+    const actions: [MediaSessionAction, () => void][] = [
+      ['play', () => this.state.status !== 'playing' && this.play()],
+      ['pause', () => (this.state.status === 'playing' ? this.pause() : this.play())],
+      ['stop', () => this.pause()],
     ]
     for (const [action, fn] of actions) {
       try {
