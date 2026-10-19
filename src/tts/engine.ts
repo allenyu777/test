@@ -47,9 +47,4 @@ export interface Engine {
   resume(): boolean
   setRate(rate: number): boolean
   isActive(): boolean
-  /**
-   * 锁屏控件的播放 / 暂停是否交给系统直接控制音频（云端语音）。
-   * 暂停后页面会被 iOS 挂起，页面里的代码要等打开 App 才会执行；系统直接控制 <audio> 则不受影响
-   */
-  readonly nativeControls?: boolean
 }

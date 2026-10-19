@@ -137,6 +137,9 @@ const CACHE_SIZE = 40
 /** 网络出错后每次重试前等待的时间；断网时先等网络恢复 */
 const RETRY_DELAYS = [1500, 3000, 5000, 8000, 12000]
 
+/** 暂停后用静音占着音频的最长时间（之后才真正停下，省电） */
+const SOFT_PAUSE_MS = 30 * 60_000
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 /** 断网时等网络恢复（最多 max 毫秒） */
@@ -167,7 +170,6 @@ function weight(text: string): number {
 
 export class CloudEngine implements Engine {
   readonly kind = 'cloud'
-  readonly nativeControls = true
   private gen = 0
   private pending: { segment: Segment; blob: Promise<Blob> }[] = []
   private source: SegmentSource | null = null
@@ -177,7 +179,11 @@ export class CloudEngine implements Engine {
   private active = false
   private userPaused = false
   private lastIndex = -1
-  private currentUrl: string | null = null
+  /** 当前这一段的音频 */
+  private current: { url: string; segment: Segment } | null = null
+  /** 暂停时这一段播到的秒数（继续时从这里接着播） */
+  private parkedTime: number | null = null
+  private softTimer: ReturnType<typeof setTimeout> | null = null
   /** 当前片段的音频是否已经放进 <audio>（下一段还在下载时为 false） */
   private attached = false
   private cache = new Map<string, Promise<Blob>>()
@@ -289,7 +295,7 @@ export class CloudEngine implements Engine {
     const slow = setTimeout(() => {
       if (gen !== this.gen) return
       this.callbacks?.onLoading?.(true)
-      this.fillGap()
+      if (!this.userPaused) this.playSilence(false)
     }, 400)
     let blob: Blob
     try {
@@ -297,7 +303,7 @@ export class CloudEngine implements Engine {
     } catch (e) {
       clearTimeout(slow)
       if (gen !== this.gen) return
-      this.stopGap()
+      this.stopSilence()
       this.callbacks?.onLoading?.(false)
       this.active = false
       this.callbacks?.onError(e instanceof Error ? e.message : String(e))
@@ -307,50 +313,86 @@ export class CloudEngine implements Engine {
     if (gen !== this.gen) return
     this.callbacks?.onLoading?.(false)
 
-    const audio = mainAudio()
-    audio.loop = false
     const url = URL.createObjectURL(blob)
-    if (this.currentUrl) URL.revokeObjectURL(this.currentUrl)
-    this.currentUrl = url
+    if (this.current) URL.revokeObjectURL(this.current.url)
+    this.current = { url, segment: item.segment }
+    // 暂停期间下载好的：记下来，继续时从头播放这一段
+    if (this.userPaused) {
+      this.parkedTime = 0
+      return
+    }
+    this.attachSpeech(gen, 0)
+  }
+
+  /** 把当前这一段的音频放进 <audio> 并从 time 秒开始播放 */
+  private attachSpeech(gen: number, time: number) {
+    const current = this.current
+    if (!current) return
+    const audio = mainAudio()
     const rate = this.options?.rate ?? 1
+    audio.loop = false
     audio.onended = () => gen === this.gen && this.playNext(gen)
-    audio.ontimeupdate = () => this.track(gen, item.segment)
+    audio.ontimeupdate = () => this.track(gen, current.segment)
     audio.onerror = () => gen === this.gen && this.playNext(gen)
     this.listenExternal(gen)
-    audio.src = url
+    audio.src = current.url
     this.attached = true
     audio.defaultPlaybackRate = rate
     audio.playbackRate = rate
-    if (this.userPaused) return
-    try {
-      await audio.play()
-      audio.playbackRate = rate
-    } catch (e) {
-      if (gen !== this.gen) return
-      const name = (e as DOMException)?.name
-      if (name === 'AbortError') return
-      this.active = false
-      this.callbacks?.onError(name === 'NotAllowedError' ? '浏览器阻止了自动播放，请再点一次播放' : '音频播放失败')
+    if (time > 0) {
+      audio.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (gen === this.gen && audio.src === current.url) audio.currentTime = time
+        },
+        { once: true },
+      )
     }
+    audio
+      .play()
+      .then(() => {
+        audio.playbackRate = rate
+      })
+      .catch((e: unknown) => {
+        if (gen !== this.gen) return
+        const name = (e as DOMException)?.name
+        if (name === 'AbortError') return
+        this.active = false
+        this.callbacks?.onError(name === 'NotAllowedError' ? '浏览器阻止了自动播放，请再点一次播放' : '音频播放失败')
+      })
   }
 
   /**
-   * 下一段还在下载时先播放静音：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读
+   * 播放循环的静音。
+   * 下一段还在下载时（paused = false）：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读。
+   * 暂停时（paused = true）：iOS 上的网页应用暂停一会儿后，系统会收回它的音频，锁屏控件上点播放就没有反应了
+   * （WebKit 的已知问题），所以暂停时用静音"占着"音频，锁屏上随时能继续；暂停太久（30 分钟）才真正停下
    */
-  private fillGap() {
-    if (this.userPaused) return
+  private playSilence(paused: boolean) {
     const audio = mainAudio()
     audio.onended = null
     audio.ontimeupdate = null
     audio.onerror = null
-    this.listenExternal(this.gen)
+    if (paused) {
+      audio.onpause = null
+      audio.onplay = null
+    } else this.listenExternal(this.gen)
     audio.loop = true
-    audio.src = silent()
-    audio.play().catch(() => {})
+    if (!audio.src.startsWith(silent()) || audio.paused) {
+      if (!audio.src.startsWith(silent())) audio.src = silent()
+      audio.play().catch(() => {})
+    }
+  }
+
+  private stopSilence() {
+    const audio = mainAudio()
+    if (!audio.loop) return
+    audio.loop = false
+    audio.pause()
   }
 
   /**
-   * 锁屏控件、耳机、来电让音频暂停或继续时（系统直接控制 <audio>）同步播放状态。
+   * 锁屏控件、耳机、来电让音频暂停或继续时同步播放状态。
    * 换音频地址时也可能触发 pause 事件，那时已经接着在播放（audio.paused 为 false），不算暂停
    */
   private listenExternal(gen: number) {
@@ -358,20 +400,19 @@ export class CloudEngine implements Engine {
     audio.onpause = () => {
       if (gen !== this.gen || !this.active || audio.ended || !audio.paused || this.userPaused) return
       this.userPaused = true
+      if (this.attached && this.current) {
+        this.parkedTime = audio.currentTime
+        this.attached = false
+      }
       this.callbacks?.onPausedExternally?.()
     }
     audio.onplay = () => {
       if (gen !== this.gen || !this.active || !this.userPaused) return
       this.userPaused = false
+      this.parkedTime = null
+      this.attached = !audio.loop
       this.callbacks?.onResumedExternally?.()
     }
-  }
-
-  private stopGap() {
-    const audio = mainAudio()
-    if (!audio.loop) return
-    audio.loop = false
-    audio.pause()
   }
 
   private track(gen: number, segment: Segment) {
@@ -397,11 +438,18 @@ export class CloudEngine implements Engine {
     }
   }
 
+  private clearSoftPause() {
+    if (this.softTimer) clearTimeout(this.softTimer)
+    this.softTimer = null
+  }
+
   stop() {
     this.gen++
     this.active = false
     if (this.watchdog) clearInterval(this.watchdog)
     this.watchdog = null
+    this.clearSoftPause()
+    this.parkedTime = null
     this.pending = []
     const audio = mainAudio()
     audio.onended = null
@@ -413,30 +461,44 @@ export class CloudEngine implements Engine {
     audio.pause()
   }
 
+  /** 暂停：记下这一段播到哪里，换成静音占着音频（见 playSilence） */
   pause() {
     if (!this.active) return false
+    const audio = mainAudio()
     this.userPaused = true
-    mainAudio().pause()
+    if (this.attached && this.current) {
+      this.parkedTime = audio.currentTime
+      this.attached = false
+    }
+    this.playSilence(true)
+    this.clearSoftPause()
+    this.softTimer = setTimeout(() => {
+      this.softTimer = null
+      if (this.userPaused) this.stopSilence()
+    }, SOFT_PAUSE_MS)
     return true
   }
 
   resume() {
-    const audio = mainAudio()
-    // <audio> 被别处（如设置页试听）占用过，或当前片段已经播完，就不能原地继续
-    if (!this.active || !this.currentUrl) return false
-    if (this.attached && audio.src !== this.currentUrl) return false
+    if (!this.active) return false
+    this.clearSoftPause()
     this.userPaused = false
     this.stuck = 0
     this.lastTime = -1
-    // 下一段还在下载：下载完成后 playNext 会自动开始播放
-    if (!this.attached) return true
-    audio.playbackRate = this.options?.rate ?? 1
-    const gen = this.gen
-    audio.play().catch((e: unknown) => {
-      if (gen !== this.gen || (e as DOMException)?.name === 'AbortError') return
-      this.active = false
-      this.callbacks?.onError('音频播放失败，请重试')
-    })
+    // 从暂停的位置接着播放
+    if (this.current && this.parkedTime != null) {
+      const time = this.parkedTime
+      this.parkedTime = null
+      this.attachSpeech(this.gen, time)
+      return true
+    }
+    // 下一段还在下载：先播放静音，下载完成后 playNext 会自动开始播放
+    if (!this.attached) {
+      this.playSilence(false)
+      return true
+    }
+    const audio = mainAudio()
+    if (audio.paused) audio.play().catch(() => {})
     return true
   }
 
