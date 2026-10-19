@@ -46,6 +46,48 @@ export function setPlaybackSession() {
   }
 }
 
+/**
+ * 暂停时让页面保持活跃（Web Audio 播放一个听不见的极低音：20 Hz、-80 dB）。
+ * iOS 上的网页应用暂停一会儿后系统会收回音频，锁屏控件上点播放就没有反应了；
+ * 以前用 <audio> 播放静音占着音频，但那样锁屏控件会一直显示"正在播放"。
+ * Web Audio 不会出现在锁屏控件上，所以 <audio> 可以真正暂停，锁屏按钮显示正确。
+ * 要在用户点击时先启动（iOS 不允许在后台启动声音）
+ */
+type AudioContextCtor = typeof AudioContext
+let keeperCtx: AudioContext | null = null
+let keeperOsc: OscillatorNode | null = null
+
+export function startAudioKeeper() {
+  try {
+    const Ctor = (window.AudioContext ?? (window as Window & { webkitAudioContext?: AudioContextCtor }).webkitAudioContext) as AudioContextCtor | undefined
+    if (!Ctor) return
+    keeperCtx ??= new Ctor()
+    if (keeperCtx.state !== 'running') keeperCtx.resume().catch(() => {})
+    if (!keeperOsc) {
+      const osc = keeperCtx.createOscillator()
+      const gain = keeperCtx.createGain()
+      osc.frequency.value = 20
+      gain.gain.value = 0.0001
+      osc.connect(gain).connect(keeperCtx.destination)
+      osc.start()
+      keeperOsc = osc
+    }
+  } catch {
+    // 不支持 Web Audio
+  }
+}
+
+export function stopAudioKeeper() {
+  try {
+    keeperOsc?.stop()
+    keeperOsc?.disconnect()
+  } catch {
+    // 已经停了
+  }
+  keeperOsc = null
+  keeperCtx?.suspend().catch(() => {})
+}
+
 let main: HTMLAudioElement | null = null
 
 /** 云端语音使用的播放器（全程复用同一个元素，iOS 才允许后台连续播放） */

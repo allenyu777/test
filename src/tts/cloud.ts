@@ -1,6 +1,6 @@
 // 云端神经语音：Azure 语音服务 / OpenAI 兼容接口
 // 合成好的音频用同一个 <audio> 连续播放，支持锁屏后台播放和倍速
-import { mainAudio, silent } from './audio'
+import { mainAudio, silent, startAudioKeeper, stopAudioKeeper } from './audio'
 import type { Engine, EngineCallbacks, EngineOptions, Segment, SegmentSource } from './engine'
 
 export interface CloudProvider {
@@ -295,7 +295,7 @@ export class CloudEngine implements Engine {
     const slow = setTimeout(() => {
       if (gen !== this.gen) return
       this.callbacks?.onLoading?.(true)
-      if (!this.userPaused) this.playSilence(false)
+      if (!this.userPaused) this.playSilence()
     }, 400)
     let blob: Blob
     try {
@@ -363,25 +363,17 @@ export class CloudEngine implements Engine {
   }
 
   /**
-   * 播放循环的静音。
-   * 下一段还在下载时（paused = false）：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读。
-   * 暂停时（paused = true）：iOS 上的网页应用暂停一会儿后，系统会收回它的音频，锁屏控件上点播放就没有反应了
-   * （WebKit 的已知问题），所以暂停时用静音"占着"音频，锁屏上随时能继续；暂停超过 5 分钟才真正停下，并收起锁屏控件
+   * 下一段还在下载时播放循环的静音：锁屏后如果什么都没在播放，iOS 会把页面挂起，下载完也不会接着读
    */
-  private playSilence(paused: boolean) {
+  private playSilence() {
     const audio = mainAudio()
     audio.onended = null
     audio.ontimeupdate = null
     audio.onerror = null
-    if (paused) {
-      audio.onpause = null
-      audio.onplay = null
-    } else this.listenExternal(this.gen)
+    this.listenExternal(this.gen)
     audio.loop = true
-    if (!audio.src.startsWith(silent()) || audio.paused) {
-      if (!audio.src.startsWith(silent())) audio.src = silent()
-      audio.play().catch(() => {})
-    }
+    if (!audio.src.startsWith(silent())) audio.src = silent()
+    if (audio.paused) audio.play().catch(() => {})
   }
 
   private stopSilence() {
@@ -461,7 +453,10 @@ export class CloudEngine implements Engine {
     audio.pause()
   }
 
-  /** 暂停：记下这一段播到哪里，换成静音占着音频（见 playSilence） */
+  /**
+   * 暂停：记下这一段播到哪里，<audio> 真正暂停（锁屏控件显示"播放"按钮），
+   * 用听不见的 Web Audio 让页面保持活跃，锁屏上点播放能马上继续（见 startAudioKeeper）
+   */
   pause() {
     if (!this.active) return false
     const audio = mainAudio()
@@ -470,7 +465,11 @@ export class CloudEngine implements Engine {
       this.parkedTime = audio.currentTime
       this.attached = false
     }
-    this.playSilence(true)
+    audio.onpause = null
+    audio.onplay = null
+    audio.loop = false
+    audio.pause()
+    startAudioKeeper()
     this.clearSoftPause()
     this.softTimer = setTimeout(() => {
       this.softTimer = null
@@ -481,6 +480,7 @@ export class CloudEngine implements Engine {
       audio.pause()
       audio.removeAttribute('src')
       audio.load()
+      stopAudioKeeper()
       this.callbacks?.onSuspended?.()
     }, SOFT_PAUSE_MS)
     return true
@@ -501,7 +501,7 @@ export class CloudEngine implements Engine {
     }
     // 下一段还在下载：先播放静音，下载完成后 playNext 会自动开始播放
     if (!this.attached) {
-      this.playSilence(false)
+      this.playSilence()
       return true
     }
     const audio = mainAudio()
