@@ -8,7 +8,7 @@ import { coverUrl, library, patchBookLocal } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
 import { createStore } from './store'
-import { primeAudio, setPlaybackSession, setWakeLock, startKeepAlive, stopKeepAlive } from './tts/audio'
+import { primeAudio, setPlaybackSession, setWakeLock, startAudioKeeper, startKeepAlive, stopAudioKeeper, stopKeepAlive } from './tts/audio'
 import { CloudEngine, azureProvider, openaiProvider } from './tts/cloud'
 import type { Engine, EngineCallbacks, Segment, SegmentSource } from './tts/engine'
 import { SystemEngine } from './tts/system'
@@ -188,6 +188,7 @@ class Player {
   /** 卸下当前的书（例如书被删除时） */
   close() {
     this.engine?.stop()
+    stopAudioKeeper()
     this.engine = null
     this.clearSleep()
     if (this.saveTimer) clearTimeout(this.saveTimer)
@@ -207,6 +208,8 @@ class Player {
   play(from?: Pos) {
     if (!this.book || !this.meta) return
     const s = this.state
+    // 云端语音：暂停时让页面保持活跃要用 Web Audio，在点击里启动（已经在运行时什么都不做）
+    if (s.voice.engine !== 'system') startAudioKeeper()
     // 云端音频暂停后原地继续
     if (!from && s.status === 'paused' && this.engine?.resume()) {
       this.setStatus('playing')
@@ -741,6 +744,8 @@ class Player {
     setWakeLock(playing && s.keepAwake)
     if (playing && this.state.voice.engine === 'system' && s.keepAlive) startKeepAlive()
     else stopKeepAlive()
+    // 读完、出错等真正停下时，不再需要让页面保持活跃（云端语音暂停时引擎仍在，保持 5 分钟）
+    if (!playing && !this.engine?.isActive()) stopAudioKeeper()
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = playing ? 'playing' : status === 'paused' ? 'paused' : 'none'
       this.updatePositionState()
