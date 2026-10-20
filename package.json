@@ -1,7 +1,7 @@
 {
   "name": "tingshu",
   "private": true,
-  "version": "1.17.0",
+  "version": "1.17.1",
   "description": "听书：在 iPhone 上自用的电子书朗读 PWA",
   "type": "module",
   "scripts": {
