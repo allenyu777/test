@@ -299,18 +299,6 @@ export function TimerSheet({ onClose }: { onClose: () => void }) {
           读完本章{sleep.mode === 'chapter' && <IconCheck class="check" size={20} />}
         </button>
       </div>
-      <button
-        class="btn block"
-        style={{ marginTop: '16px' }}
-        onClick={() => {
-          player.setSleep('off', 0)
-          player.stopAndClose()
-          toast('已停止，锁屏控件已收起')
-          onClose()
-        }}
-      >
-        现在停止并收起锁屏控件
-      </button>
     </Sheet>
   )
 }
