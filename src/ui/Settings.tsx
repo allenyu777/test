@@ -234,6 +234,20 @@ export function SettingsPage() {
         <Row title="快进">
           <SecondsChips value={s.skipForward} onChange={v => updateSettings({ skipForward: v })} />
         </Row>
+        <Row title="锁屏控件按钮" desc="左右两边的按钮">
+          <div class="chips" style={{ flexWrap: 'nowrap' }}>
+            {(
+              [
+                ['seek', '快退/快进'],
+                ['track', '上一节/下一节'],
+              ] as const
+            ).map(([v, label]) => (
+              <button key={v} class={`chip ${s.lockButtons === v ? 'active' : ''}`} onClick={() => updateSettings({ lockButtons: v })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </Row>
         <Row title="每本书单独记住语速">
           <Switch on={s.perBookRate} onChange={v => updateSettings({ perBookRate: v })} />
         </Row>

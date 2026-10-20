@@ -49,6 +49,8 @@ export interface Engine {
   /** 支持原地暂停/继续（云端音频）；返回 false 表示需要重新 start */
   pause(): boolean
   resume(): boolean
+  /** 暂停中马上释放音频（锁屏控件随之收起）；继续时 resume 照常接着读 */
+  suspend?(): void
   setRate(rate: number): boolean
   isActive(): boolean
 }
