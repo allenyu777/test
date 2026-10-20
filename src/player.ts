@@ -818,19 +818,13 @@ class Player {
     if (!('mediaSession' in navigator)) return
     const ms = navigator.mediaSession
     this.syncMediaHandlers()
-    const handlers: [MediaSessionAction, () => void][] = [
-      ['previoustrack', () => this.skip(-1)],
-      ['nexttrack', () => this.skip(1)],
-      ['seekbackward', () => this.skipBy(-1)],
-      ['seekforward', () => this.skipBy(1)],
-    ]
-    for (const [action, fn] of handlers) {
-      try {
-        ms.setActionHandler(action, fn)
-      } catch {
-        // 不支持的操作
-      }
-    }
+    this.syncLockButtons()
+    let lockButtons = settings.get().lockButtons
+    settings.subscribe(() => {
+      if (settings.get().lockButtons === lockButtons) return
+      lockButtons = settings.get().lockButtons
+      this.syncLockButtons()
+    })
     try {
       ms.setActionHandler('seekto', details => {
         if (details.seekTime != null) this.seekToTime(details.seekTime)
@@ -849,7 +843,7 @@ class Player {
     const actions: [MediaSessionAction, () => void][] = [
       ['play', () => this.state.status !== 'playing' && this.play()],
       ['pause', () => (this.state.status === 'playing' ? this.pause() : this.play())],
-      ['stop', () => this.pause()],
+      ['stop', () => this.stopAndClose()],
     ]
     for (const [action, fn] of actions) {
       try {
@@ -858,6 +852,37 @@ class Player {
         // 不支持的操作
       }
     }
+  }
+
+  /**
+   * 锁屏控件左右两个按钮：iOS 设置了上一首/下一首就显示成切换按钮，不设置才显示快退/快进。
+   * 耳机按两下、三下也跟着变（快进、快退，或者下一节、上一节）
+   */
+  private syncLockButtons() {
+    if (!('mediaSession' in navigator)) return
+    const ms = navigator.mediaSession
+    const seek = settings.get().lockButtons !== 'track'
+    const handlers: [MediaSessionAction, (() => void) | null][] = [
+      ['previoustrack', seek ? null : () => this.skip(-1)],
+      ['nexttrack', seek ? null : () => this.skip(1)],
+      ['seekbackward', () => this.skipBy(-1)],
+      ['seekforward', () => this.skipBy(1)],
+    ]
+    for (const [action, fn] of handlers) {
+      try {
+        ms.setActionHandler(action, fn)
+      } catch {
+        // 不支持的操作
+      }
+    }
+  }
+
+  /** 停止朗读并马上收起锁屏和控制中心里的播放控件（不用等暂停 5 分钟） */
+  stopAndClose() {
+    if (this.state.status === 'playing') this.pause()
+    this.saveNow()
+    this.engine?.suspend?.()
+    this.closeNowPlaying()
   }
 
   /** 暂停太久：收起锁屏和控制中心里的播放控件（再播放时 updateMetadata 会重新显示） */

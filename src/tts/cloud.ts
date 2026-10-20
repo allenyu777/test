@@ -482,19 +482,21 @@ export class CloudEngine implements Engine {
     audio.pause()
     startAudioKeeper()
     this.clearSoftPause()
-    this.softTimer = setTimeout(() => {
-      this.softTimer = null
-      if (!this.userPaused) return
-      // 真正停下：卸掉音频，iOS 会把锁屏上的播放控件收起来；继续时 resume 会把这一段重新放回去
-      const audio = mainAudio()
-      audio.loop = false
-      audio.pause()
-      audio.removeAttribute('src')
-      audio.load()
-      stopAudioKeeper()
-      this.callbacks?.onSuspended?.()
-    }, SOFT_PAUSE_MS)
+    this.softTimer = setTimeout(() => this.suspend(), SOFT_PAUSE_MS)
     return true
+  }
+
+  /** 真正停下：卸掉音频，iOS 会把锁屏上的播放控件收起来；继续时 resume 会把这一段重新放回去 */
+  suspend() {
+    this.clearSoftPause()
+    if (!this.active || !this.userPaused) return
+    const audio = mainAudio()
+    audio.loop = false
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load()
+    stopAudioKeeper()
+    this.callbacks?.onSuspended?.()
   }
 
   resume() {

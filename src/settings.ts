@@ -47,6 +47,8 @@ export interface Settings {
   /** 后退、快进按钮一次跳过的秒数 */
   skipBack: number
   skipForward: number
+  /** 锁屏控件左右的按钮：快退/快进，或上一节/下一节 */
+  lockButtons: 'seek' | 'track'
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -78,6 +80,7 @@ export const DEFAULT_SETTINGS: Settings = {
   readExtras: false,
   skipBack: 10,
   skipForward: 15,
+  lockButtons: 'seek',
 }
 
 const KEY = 'tingshu.settings.v1'
