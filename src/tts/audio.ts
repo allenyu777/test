@@ -90,6 +90,18 @@ export function stopAudioKeeper() {
 
 let main: HTMLAudioElement | null = null
 
+const playingListeners: (() => void)[] = []
+
+/** 页面的音频（云端语音、保活静音）开始出声时通知 */
+export function onAudioPlaying(fn: () => void) {
+  playingListeners.push(fn)
+  for (const a of [main, keeper]) a?.addEventListener('playing', fn)
+}
+
+function watchPlaying(a: HTMLAudioElement) {
+  for (const fn of playingListeners) a.addEventListener('playing', fn)
+}
+
 /** 云端语音使用的播放器（全程复用同一个元素，iOS 才允许后台连续播放） */
 export function mainAudio(): HTMLAudioElement {
   if (!main) {
@@ -97,6 +109,7 @@ export function mainAudio(): HTMLAudioElement {
     main.preload = 'auto'
     main.setAttribute('playsinline', '')
     ;(main as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true
+    watchPlaying(main)
   }
   return main
 }
@@ -128,6 +141,7 @@ export function startKeepAlive() {
     keeper.loop = true
     keeper.setAttribute('playsinline', '')
     keeper.src = silent()
+    watchPlaying(keeper)
   }
   if (keeper.paused) keeper.play().catch(() => {})
 }

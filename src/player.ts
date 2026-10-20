@@ -9,7 +9,7 @@ import { coverUrl, library, patchBookLocal, updateBookMeta } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
 import { createStore } from './store'
-import { primeAudio, setPlaybackSession, setWakeLock, startAudioKeeper, startKeepAlive, stopAudioKeeper, stopKeepAlive } from './tts/audio'
+import { onAudioPlaying, primeAudio, setPlaybackSession, setWakeLock, startAudioKeeper, startKeepAlive, stopAudioKeeper, stopKeepAlive } from './tts/audio'
 import { CloudEngine, azureProvider, openaiProvider } from './tts/cloud'
 import type { Engine, EngineCallbacks, Segment, SegmentSource } from './tts/engine'
 import { SystemEngine } from './tts/system'
@@ -809,6 +809,7 @@ class Player {
         if (this.state.status === 'playing' && engine.isStalled()) this.startEngine(this.state.pos)
       }
       setPlaybackSession()
+      this.syncMediaHandlers()
       // 云端语音：回到前台时马上检查是不是真的在播放
       if (engine instanceof CloudEngine && this.state.status === 'playing') engine.ensurePlaying()
     }
@@ -816,22 +817,16 @@ class Player {
 
   private setupMediaSession() {
     if (!('mediaSession' in navigator)) return
-    const ms = navigator.mediaSession
     this.syncMediaHandlers()
-    this.syncLockButtons()
     let lockButtons = settings.get().lockButtons
     settings.subscribe(() => {
       if (settings.get().lockButtons === lockButtons) return
       lockButtons = settings.get().lockButtons
-      this.syncLockButtons()
+      this.syncMediaHandlers()
     })
-    try {
-      ms.setActionHandler('seekto', details => {
-        if (details.seekTime != null) this.seekToTime(details.seekTime)
-      })
-    } catch {
-      // 不支持拖动进度条
-    }
+    // iOS 在页面开始出声、换一段音频时会丢掉之前设置的按钮，换回默认的一套：每次开始出声都重新设置
+    onAudioPlaying(() => this.syncMediaHandlers())
+    window.addEventListener('pageshow', () => this.syncMediaHandlers())
   }
 
   /**
@@ -851,6 +846,14 @@ class Player {
       } catch {
         // 不支持的操作
       }
+    }
+    this.syncLockButtons()
+    try {
+      navigator.mediaSession.setActionHandler('seekto', details => {
+        if (details.seekTime != null) this.seekToTime(details.seekTime)
+      })
+    } catch {
+      // 不支持拖动进度条
     }
   }
 
