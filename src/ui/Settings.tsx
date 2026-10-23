@@ -4,6 +4,7 @@ import { createBackup, restoreBackup } from '../backup'
 import { requestPersistence, storageEstimate } from '../db'
 import { player } from '../player'
 import { settings, updateSettings, type Settings } from '../settings'
+import { clearDiag, diagEntries } from '../diag'
 import { useStore } from '../store'
 import { mainAudio, primeAudio } from '../tts/audio'
 import { azureProvider, openaiProvider } from '../tts/cloud'
@@ -78,7 +79,7 @@ export function SettingsPage() {
   const s = useStore(settings, x => x)
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
   const [persisted, setPersisted] = useState<boolean | null>(null)
-  const [sheet, setSheet] = useState<'export' | 'backup' | null>(null)
+  const [sheet, setSheet] = useState<'export' | 'backup' | 'diag' | null>(null)
   const [backupFile, setBackupFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const restoreRef = useRef<HTMLInputElement>(null)
@@ -254,6 +255,9 @@ export function SettingsPage() {
         <Row title="写完笔记后继续播放">
           <Switch on={s.resumeAfterNote} onChange={v => updateSettings({ resumeAfterNote: v })} />
         </Row>
+        <Row title="播放诊断记录" desc="锁屏按钮、播放中断等记录，遇到问题时截图发给开发者" onClick={() => setSheet('diag')}>
+          <IconChevronRight size={20} class="muted" />
+        </Row>
       </div>
 
       <div class="section-title">语音笔记</div>
@@ -370,6 +374,7 @@ export function SettingsPage() {
       </div>
 
       {sheet === 'export' && <ExportSheet onClose={() => setSheet(null)} />}
+      {sheet === 'diag' && <DiagSheet onClose={() => setSheet(null)} />}
       {sheet === 'backup' && backupFile && (
         <Sheet title="备份已生成" onClose={() => setSheet(null)}>
           <ExportReady file={backupFile} />
@@ -379,5 +384,39 @@ export function SettingsPage() {
         </Sheet>
       )}
     </div>
+  )
+}
+
+function DiagSheet({ onClose }: { onClose: () => void }) {
+  const [entries, setEntries] = useState(() => diagEntries().reverse())
+  return (
+    <Sheet title="播放诊断记录" onClose={onClose}>
+      <div class="hint">最新的在最上面。锁屏操作后回到这里截图即可。</div>
+      <div style={{ display: 'flex', gap: '8px', margin: '8px 0 12px' }}>
+        <button
+          class="btn small"
+          onClick={() => {
+            navigator.clipboard?.writeText(`听书 v${__APP_VERSION__}\n` + entries.join('\n')).then(
+              () => toast('已复制'),
+              () => toast('复制失败', 'error'),
+            )
+          }}
+        >
+          复制
+        </button>
+        <button
+          class="btn small"
+          onClick={() => {
+            clearDiag()
+            setEntries([])
+          }}
+        >
+          清空
+        </button>
+      </div>
+      <div style={{ fontSize: '13px', lineHeight: 1.6, whiteSpace: 'pre-wrap', userSelect: 'text' }}>
+        {entries.length ? entries.join('\n') : '还没有记录'}
+      </div>
+    </Sheet>
   )
 }

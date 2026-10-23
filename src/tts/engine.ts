@@ -32,6 +32,8 @@ export interface EngineCallbacks {
   onSuspended?(): void
   /** 一段音频的字数和 1 倍速下的时长（秒），用来校准朗读速度 */
   onTiming?(chars: number, seconds: number): void
+  /** 不是页面发起的拨动（系统直接改了播放位置），delta 为秒数 */
+  onExternalSeek?(delta: number): void
 }
 
 export interface EngineOptions {

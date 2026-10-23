@@ -8,6 +8,7 @@ import type { BookMeta, ChapterMark } from './db'
 import { coverUrl, library, patchBookLocal, updateBookMeta } from './library'
 import { ocrRunner } from './ocr/runner'
 import { settings, updateSettings, type VoiceChoice } from './settings'
+import { diag } from './diag'
 import { createStore } from './store'
 import { onAudioPlaying, primeAudio, setPlaybackSession, setWakeLock, startAudioKeeper, startKeepAlive, stopAudioKeeper, stopKeepAlive } from './tts/audio'
 import { CloudEngine, azureProvider, openaiProvider } from './tts/cloud'
@@ -262,6 +263,24 @@ class Player {
     const chars = charsForSeconds(Math.abs(seconds), this.meta.lang, this.state.rate, this.paceCpm()) * Math.sign(seconds)
     const p = book.skipChars(this.state.pos, chars)
     if (p) this.seek(p)
+  }
+
+  /** 上次锁屏快进快退的时间：系统有时既调用按钮、又直接拨动音频，只算一次 */
+  private lastLockSkip = 0
+
+  private lockSkip(direction: 1 | -1) {
+    this.lastLockSkip = Date.now()
+    this.skipBy(direction)
+  }
+
+  /**
+   * 系统直接把正在播放的那段音频往前、往后拨了几秒（锁屏的 ±10 秒按钮有时不经过页面的按钮处理）：
+   * 一段语音只有几秒，拨 10 秒会直接拨到这一段的头或尾，改成按设置的秒数在全书里跳
+   */
+  private onExternalSeek(delta: number) {
+    if (Date.now() - this.lastLockSkip < 1500) return
+    diag(`系统直接拨动了音频 ${delta > 0 ? '+' : ''}${delta.toFixed(1)} 秒，改成按设置跳转`)
+    this.lockSkip(delta > 0 ? 1 : -1)
   }
 
   /** 设置里的后退 / 快进秒数 */
@@ -528,6 +547,7 @@ class Player {
       onSentence: pos => this.onSentence(engine, pos),
       onFinished: () => this.onFinished(engine),
       onError: message => {
+        diag(`朗读出错：${message}`)
         if (this.engine !== engine) return
         this.setStatus('paused')
         this.store.set({ loading: false })
@@ -535,6 +555,7 @@ class Player {
       },
       onLoading: loading => this.engine === engine && this.store.set({ loading }),
       onPausedExternally: () => {
+        diag('音频被外部暂停（系统、锁屏、来电，或播放被拒绝）')
         if (this.engine === engine && this.state.status === 'playing') {
           this.setStatus('paused')
           this.saveNow()
@@ -544,6 +565,7 @@ class Player {
         if (this.engine === engine && this.state.status !== 'playing') this.setStatus('playing')
       },
       onTiming: (chars, seconds) => recordPace(voiceKey(voice), chars, seconds),
+      onExternalSeek: delta => this.engine === engine && this.state.status === 'playing' && this.onExternalSeek(delta),
       onSuspended: () => {
         if (this.engine === engine && this.state.status !== 'playing') this.closeNowPlaying()
       },
@@ -826,6 +848,7 @@ class Player {
 
   private onVisibility() {
     const engine = this.engine
+    diag(document.visibilityState === 'hidden' ? 'App 切到后台 / 锁屏' : 'App 回到前台')
     if (document.visibilityState === 'hidden') {
       this.saveNow()
       // 进入后台：系统语音一次排队更多句子
@@ -870,7 +893,10 @@ class Player {
     ]
     for (const [action, fn] of actions) {
       try {
-        navigator.mediaSession.setActionHandler(action, fn)
+        navigator.mediaSession.setActionHandler(action, () => {
+          diag(`锁屏按钮：${action}（当前${this.state.status === 'playing' ? '播放中' : '暂停'}）`)
+          fn()
+        })
       } catch {
         // 不支持的操作
       }
@@ -878,6 +904,7 @@ class Player {
     this.syncLockButtons()
     try {
       navigator.mediaSession.setActionHandler('seekto', details => {
+        diag(`锁屏拖动进度条：${details.seekTime?.toFixed(1)} 秒`)
         if (details.seekTime != null) this.seekToTime(details.seekTime)
       })
     } catch {
@@ -896,12 +923,19 @@ class Player {
     const handlers: [MediaSessionAction, (() => void) | null][] = [
       ['previoustrack', seek ? null : () => this.skip(-1)],
       ['nexttrack', seek ? null : () => this.skip(1)],
-      ['seekbackward', () => this.skipBy(-1)],
-      ['seekforward', () => this.skipBy(1)],
+      ['seekbackward', () => this.lockSkip(-1)],
+      ['seekforward', () => this.lockSkip(1)],
     ]
     for (const [action, fn] of handlers) {
       try {
-        ms.setActionHandler(action, fn)
+        ms.setActionHandler(
+          action,
+          fn &&
+            ((details: MediaSessionActionDetails) => {
+              diag(`锁屏按钮：${action}${details?.seekOffset ? `（系统给的秒数 ${details.seekOffset}）` : ''}`)
+              fn()
+            }),
+        )
       } catch {
         // 不支持的操作
       }
