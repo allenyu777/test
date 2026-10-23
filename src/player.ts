@@ -86,6 +86,9 @@ export function createSource(book: Book, from: Pos, maxChars: number, stopAt: ()
   }
 }
 
+/** 等扫描版识别后面的页面，最多播放静音等这么久 */
+const HOLD_LIMIT_MS = 15 * 60_000
+
 class Player {
   readonly store = createStore<PlayerState>({
     bookId: null,
@@ -111,6 +114,9 @@ class Player {
   private source: BookSource | null = null
   /** 读到已识别内容的末尾，正在等待后面的页面 */
   private waitingOcr = false
+  /** 等识别时正在播放静音 */
+  private holding = false
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
   private saveWarned = false
 
   constructor() {
@@ -509,6 +515,7 @@ class Player {
     this.waitingOcr = false
     const engine = this.getEngine()
     if (this.engine && this.engine !== engine) this.engine.stop()
+    if (this.holding) this.releaseHold(false)
     this.engine = engine
     this.syncMediaHandlers()
     setPlaybackSession()
@@ -621,6 +628,18 @@ class Player {
       if (ocr.status === 'running') {
         this.waitingOcr = true
         this.store.set({ loading: true })
+        // 等识别期间继续播放静音：锁屏时页面不会被挂起（识别照常进行），识别出来后也能接着出声
+        engine.hold?.()
+        this.holding = true
+        if (this.holdTimer) clearTimeout(this.holdTimer)
+        this.holdTimer = setTimeout(() => {
+          this.holdTimer = null
+          if (!this.waitingOcr || this.engine !== engine) return
+          // 等太久（识别一直没有进展）：停下来，不要一直占着锁屏
+          this.waitingOcr = false
+          this.setStatus('paused')
+          toast('后面的页面识别得太慢，已暂停；识别好后点播放继续', 'error')
+        }, HOLD_LIMIT_MS)
         if (this.meta) ocrRunner.prioritize(this.meta.id)
         toast('后面的页面还在识别，识别好后会自动接着读')
       } else {
@@ -755,6 +774,7 @@ class Player {
   }
 
   private setStatus(status: PlayStatus) {
+    if (status !== 'playing' && this.holding) this.releaseHold(true)
     this.store.set({ status, ...(status !== 'playing' ? { loading: false } : {}) })
     const s = settings.get()
     const playing = status === 'playing'
@@ -767,6 +787,14 @@ class Player {
       navigator.mediaSession.playbackState = playing ? 'playing' : status === 'paused' ? 'paused' : 'none'
       this.updatePositionState()
     }
+  }
+
+  /** 不再等识别：停掉静音（stopEngine 为 false 时是要接着朗读，引擎会直接换成朗读的声音） */
+  private releaseHold(stopEngine: boolean) {
+    this.holding = false
+    if (this.holdTimer) clearTimeout(this.holdTimer)
+    this.holdTimer = null
+    if (stopEngine && !this.engine?.isActive()) this.engine?.stop()
   }
 
   private scheduleSave() {

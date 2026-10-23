@@ -51,6 +51,8 @@ export interface Engine {
   resume(): boolean
   /** 暂停中马上释放音频（锁屏控件随之收起）；继续时 resume 照常接着读 */
   suspend?(): void
+  /** 读完已有内容、等后面的内容时保持音频播放（静音） */
+  hold?(): void
   setRate(rate: number): boolean
   isActive(): boolean
 }

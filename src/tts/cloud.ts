@@ -198,7 +198,8 @@ export class CloudEngine implements Engine {
   ) {}
 
   start(source: SegmentSource, options: EngineOptions, callbacks: EngineCallbacks) {
-    this.stop()
+    // 正在播放静音（等后面的内容）：不停下来，直接换成朗读的声音，iOS 在后台不允许重新开始播放
+    this.stop(true)
     this.source = source
     this.options = options
     this.callbacks = callbacks
@@ -446,7 +447,15 @@ export class CloudEngine implements Engine {
     this.softTimer = null
   }
 
-  stop() {
+  /**
+   * 读到已有内容的末尾，等后面的内容（扫描版还在识别）：继续播放静音。
+   * 什么都不播放时 iOS 会挂起锁屏的页面（识别也停下），等内容出来后也不允许再开始播放
+   */
+  hold() {
+    this.playSilence()
+  }
+
+  stop(keepSilence = false) {
     this.gen++
     this.active = false
     if (this.watchdog) clearInterval(this.watchdog)
@@ -460,6 +469,7 @@ export class CloudEngine implements Engine {
     audio.onerror = null
     audio.onpause = null
     audio.onplay = null
+    if (keepSilence && audio.loop && !audio.paused) return
     audio.loop = false
     audio.pause()
   }
