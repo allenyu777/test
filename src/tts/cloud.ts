@@ -198,7 +198,7 @@ export class CloudEngine implements Engine {
   ) {}
 
   start(source: SegmentSource, options: EngineOptions, callbacks: EngineCallbacks) {
-    // 正在播放静音（等后面的内容）：不停下来，直接换成朗读的声音，iOS 在后台不允许重新开始播放
+    // 正在出声时不停下来（见 stop），iOS 在后台不允许重新开始播放
     this.stop(true)
     this.source = source
     this.options = options
@@ -469,7 +469,16 @@ export class CloudEngine implements Engine {
     audio.onerror = null
     audio.onpause = null
     audio.onplay = null
-    if (keepSilence && audio.loop && !audio.paused) return
+    if (keepSilence && !audio.paused) {
+      // 正在出声时换位置（锁屏上快进快退、跳章，或者等识别后接着读）：不停下来，马上换成静音接着放，
+      // 新位置的声音下载好后再换过去。锁屏时声音一旦停下，iOS 就不允许页面自己再开始播放
+      if (!audio.loop) {
+        audio.loop = true
+        audio.src = silent()
+        audio.play().catch(() => {})
+      }
+      return
+    }
     audio.loop = false
     audio.pause()
   }
