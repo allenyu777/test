@@ -913,16 +913,17 @@ class Player {
   }
 
   /**
-   * 锁屏控件左右两个按钮：iOS 设置了上一首/下一首就显示成切换按钮，不设置才显示快退/快进。
-   * 耳机按两下、三下也跟着变（快进、快退，或者下一节、上一节）
+   * 锁屏控件左右两个按钮。iOS 的快退/快进（±秒）按钮是否可按由系统判断，常常是灰的，
+   * 所以始终用上一首/下一首这对按钮（显示为 ⏮ ⏭）：默认按设置的秒数快退/快进，也可以设成上一节/下一节。
+   * 耳机按两下、三下也一样
    */
   private syncLockButtons() {
     if (!('mediaSession' in navigator)) return
     const ms = navigator.mediaSession
     const seek = settings.get().lockButtons !== 'track'
     const handlers: [MediaSessionAction, (() => void) | null][] = [
-      ['previoustrack', seek ? null : () => this.skip(-1)],
-      ['nexttrack', seek ? null : () => this.skip(1)],
+      ['previoustrack', seek ? () => this.lockSkip(-1) : () => this.skip(-1)],
+      ['nexttrack', seek ? () => this.lockSkip(1) : () => this.skip(1)],
       ['seekbackward', () => this.lockSkip(-1)],
       ['seekforward', () => this.lockSkip(1)],
     ]

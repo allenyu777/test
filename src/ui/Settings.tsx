@@ -235,7 +235,7 @@ export function SettingsPage() {
         <Row title="快进">
           <SecondsChips value={s.skipForward} onChange={v => updateSettings({ skipForward: v })} />
         </Row>
-        <Row title="锁屏控件按钮" desc="左右两边的按钮">
+        <Row title="锁屏控件按钮" desc="左右两边的 ⏮ ⏭ 按钮">
           <div class="chips" style={{ flexWrap: 'nowrap' }}>
             {(
               [
