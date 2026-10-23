@@ -320,7 +320,8 @@ export async function renderPage(pdf: PdfDocument, index: number, targetWidth = 
     const ctx = canvas.getContext('2d')!
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    await page.render({ canvasContext: ctx, viewport, canvas } as Parameters<typeof page.render>[0]).promise
+    // 用打印模式渲染：默认模式每画一段都等下一个动画帧，锁屏、切到后台时动画帧不再触发，识别会一直卡在这一页
+    await page.render({ canvasContext: ctx, viewport, canvas, intent: 'print' } as Parameters<typeof page.render>[0]).promise
     return canvas
   } finally {
     page.cleanup()
