@@ -1,4 +1,5 @@
 // 共享的 <audio> 元素、iOS 播放解锁、静音保活、屏幕常亮
+import { diag } from '../diag'
 
 /** 生成一段完全无声的 16-bit 单声道 WAV（所有采样都是 0，任何音量下都听不到） */
 export function makeWav(seconds: number, sampleRate = 8000): Blob {
@@ -62,7 +63,7 @@ export function startAudioKeeper() {
     const Ctor = (window.AudioContext ?? (window as Window & { webkitAudioContext?: AudioContextCtor }).webkitAudioContext) as AudioContextCtor | undefined
     if (!Ctor) return
     keeperCtx ??= new Ctor()
-    if (keeperCtx.state !== 'running') keeperCtx.resume().catch(() => {})
+    if (keeperCtx.state !== 'running') keeperCtx.resume().catch(e => diag(`保活启动失败：${e instanceof Error ? e.name : e}`))
     if (!keeperOsc) {
       const osc = keeperCtx.createOscillator()
       const gain = keeperCtx.createGain()
@@ -75,6 +76,15 @@ export function startAudioKeeper() {
   } catch {
     // 不支持 Web Audio
   }
+}
+
+/**
+ * 音频真正在出声时把 Web Audio 挂起（不拆掉，暂停时 startAudioKeeper 再接着用）。
+ * iOS 把最近开始出声的那个当作锁屏控件的播放源，Web Audio 不能拨动位置，
+ * 它在出声时锁屏上的快退 / 快进按钮会变成灰色、按不动
+ */
+export function parkAudioKeeper() {
+  if (keeperCtx?.state === 'running') keeperCtx.suspend().catch(() => {})
 }
 
 export function stopAudioKeeper() {
@@ -109,6 +119,7 @@ export function mainAudio(): HTMLAudioElement {
     main.preload = 'auto'
     main.setAttribute('playsinline', '')
     ;(main as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true
+    main.addEventListener('playing', parkAudioKeeper)
     watchPlaying(main)
   }
   return main
