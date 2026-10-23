@@ -1,5 +1,6 @@
 // 云端神经语音：Azure 语音服务 / OpenAI 兼容接口
 // 合成好的音频用同一个 <audio> 连续播放，支持锁屏后台播放和倍速
+import { diag } from '../diag'
 import { mainAudio, silent, startAudioKeeper, stopAudioKeeper } from './audio'
 import type { Engine, EngineCallbacks, EngineOptions, Segment, SegmentSource } from './engine'
 
@@ -192,6 +193,11 @@ export class CloudEngine implements Engine {
   private stuck = 0
   private lastTime = -1
 
+  /** 当前这段音频最近一次正常播放到的位置（判断系统直接拨动用） */
+  private heardTime = 0
+  /** 接下来的拨动是自己发起的（从暂停处继续） */
+  private ownSeek = false
+
   constructor(
     private provider: CloudProvider,
     readonly maxChars = 220,
@@ -232,6 +238,7 @@ export class CloudEngine implements Engine {
     }
     this.stuck++
     const gen = this.gen
+    diag(`音频停住了，第 ${this.stuck} 次尝试恢复`)
     if (this.stuck <= 2) {
       // 停住了：暂停一下再播放（和手动点暂停、播放的效果一样）
       if (!audio.paused) audio.pause()
@@ -333,7 +340,22 @@ export class CloudEngine implements Engine {
     const rate = this.options?.rate ?? 1
     audio.loop = false
     audio.onended = () => gen === this.gen && this.playNext(gen)
-    audio.ontimeupdate = () => this.track(gen, current.segment)
+    audio.ontimeupdate = () => {
+      this.track(gen, current.segment)
+      if (!audio.seeking) this.heardTime = audio.currentTime
+    }
+    this.heardTime = time
+    this.ownSeek = time > 0
+    // 不是自己设置的拨动：系统直接改了播放位置（锁屏 ±10 秒按钮有时这样处理）
+    audio.onseeking = () => {
+      if (gen !== this.gen || audio.src !== current.url) return
+      if (this.ownSeek) {
+        this.ownSeek = false
+        return
+      }
+      const delta = audio.currentTime - this.heardTime
+      if (Math.abs(delta) >= 0.5) this.callbacks?.onExternalSeek?.(delta)
+    }
     audio.onerror = () => gen === this.gen && this.playNext(gen)
     this.listenExternal(gen)
     audio.src = current.url
@@ -369,6 +391,7 @@ export class CloudEngine implements Engine {
         if (gen !== this.gen) return
         const name = (e as DOMException)?.name
         if (name === 'AbortError') return
+        diag(`播放被拒绝：${name}`)
         this.active = false
         this.callbacks?.onError(name === 'NotAllowedError' ? '浏览器阻止了自动播放，请再点一次播放' : '音频播放失败')
       })
@@ -381,6 +404,7 @@ export class CloudEngine implements Engine {
     const audio = mainAudio()
     audio.onended = null
     audio.ontimeupdate = null
+    audio.onseeking = null
     audio.onerror = null
     this.listenExternal(this.gen)
     audio.loop = true
@@ -469,7 +493,8 @@ export class CloudEngine implements Engine {
     audio.onerror = null
     audio.onpause = null
     audio.onplay = null
-    if (keepSilence && !audio.paused) {
+    audio.onseeking = null
+    if (keepSilence && (!audio.paused || audio.ended)) {
       // 正在出声时换位置（锁屏上快进快退、跳章，或者等识别后接着读）：不停下来，马上换成静音接着放，
       // 新位置的声音下载好后再换过去。锁屏时声音一旦停下，iOS 就不允许页面自己再开始播放
       if (!audio.loop) {
