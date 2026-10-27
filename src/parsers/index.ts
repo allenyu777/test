@@ -58,7 +58,11 @@ export function mobiEncryption(bytes: Uint8Array): number {
   return view.getUint16(record0 + 12)
 }
 
-export async function parseFile(file: File, onProgress?: Progress): Promise<ParsedBook & { format: BookFormat }> {
+export async function parseFile(
+  file: File,
+  onProgress?: Progress,
+  options: { pdfAsImages?: boolean } = {},
+): Promise<ParsedBook & { format: BookFormat }> {
   const buffer = await file.arrayBuffer()
   const bytes = new Uint8Array(buffer)
   const name = file.name
@@ -104,7 +108,7 @@ export async function parseFile(file: File, onProgress?: Progress): Promise<Pars
     }
     case 'pdf': {
       const { parsePdf } = await import('./pdf')
-      return { ...(await parsePdf(buffer, name, onProgress)), format }
+      return { ...(await parsePdf(buffer, name, onProgress, { forceImage: options.pdfAsImages })), format }
     }
     case 'docx': {
       const { parseDocx } = await import('./docx')

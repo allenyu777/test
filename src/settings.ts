@@ -49,6 +49,8 @@ export interface Settings {
   skipForward: number
   /** 锁屏控件左右的按钮：快退/快进，或上一节/下一节 */
   lockButtons: 'seek' | 'track'
+  /** 导入 PDF 时不用自带的文字层，一律按页面图片识别 */
+  pdfAsImages: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -81,6 +83,7 @@ export const DEFAULT_SETTINGS: Settings = {
   skipBack: 10,
   skipForward: 15,
   lockButtons: 'seek',
+  pdfAsImages: false,
 }
 
 const KEY = 'tingshu.settings.v1'

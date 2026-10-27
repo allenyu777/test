@@ -49,6 +49,8 @@ export interface OcrInfo {
   error?: string
   /** 最近几页（新的在前）页首页尾的短行，用来认出页眉 */
   edges?: string[][]
+  /** 不用 PDF 自带的文字层，每页都按图片识别（文字层不可靠时） */
+  ignoreText?: boolean
 }
 
 /** 原始文件（扫描版 PDF 识别过程中需要） */

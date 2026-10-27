@@ -17,7 +17,7 @@ const LANGS: [OcrLang, string][] = [
 interface Props {
   name: string
   pages: number
-  reason: 'scanned' | 'garbled'
+  reason: 'scanned' | 'garbled' | 'forced'
   langHint: OcrLang
   onDone: (choice: ScanChoice | null) => void
 }
@@ -26,19 +26,21 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
   const cloud = cloudOcrReady()
   const [engine, setEngine] = useState<OcrEngine>('local')
   const [lang, setLang] = useState<OcrLang>(langHint)
+  // 文字层有问题时默认每页都按图片识别（最准）；扫描版里偶尔夹着的文字页照常直接用
+  const [ignoreText, setIgnoreText] = useState(reason !== 'scanned')
   // 本机识别在手机上大约每页 10 秒；云端约 3 秒
   const estimate = formatDuration(pages * (engine === 'local' ? 10 : 3))
 
   return (
     <Sheet
-      title={reason === 'garbled' ? '这本 PDF 的文字是乱码' : '这是扫描版 PDF'}
+      title={reason === 'garbled' ? '这本 PDF 的文字有错乱' : reason === 'forced' ? '按页面图片识别' : '这是扫描版 PDF'}
       onClose={() => onDone(null)}
       footer={
         <>
           <button class="btn" onClick={() => onDone(null)}>
             取消
           </button>
-          <button class="btn primary" onClick={() => onDone({ engine, lang })}>
+          <button class="btn primary" onClick={() => onDone({ engine, lang, ignoreText })}>
             开始识别
           </button>
         </>
@@ -48,8 +50,10 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
         <b style={{ wordBreak: 'break-all' }}>{name}</b>
         <br />
         {reason === 'garbled'
-          ? `共 ${pages} 页。PDF 里的字体缺少正确的文字编码，直接读取会是乱码（繁体或老版本 PDF 常见）。可以按页面图片重新识别文字后朗读，文字正常的页面会直接使用。`
-          : `共 ${pages} 页，页面是图片，需要先识别出文字才能朗读。`}
+          ? `共 ${pages} 页。PDF 自带的文字有错乱（乱码、错字，繁体或老版本 PDF 常见），直接读取会读错。可以按页面图片重新识别文字后朗读。`
+          : reason === 'forced'
+            ? `共 ${pages} 页。设置里打开了「PDF 一律按图片识别」，不使用 PDF 自带的文字。`
+            : `共 ${pages} 页，页面是图片，需要先识别出文字才能朗读。`}
         识别在后台逐页进行，前几页识别完就可以开始听，后面的边听边识别。
       </div>
       <div class="field">
@@ -79,6 +83,27 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
           </button>
         )}
       </div>
+      {reason !== 'scanned' && (
+        <div class="field">
+          <span class="label">PDF 自带的文字</span>
+          <div class="option-list">
+            <button class="option" onClick={() => setIgnoreText(true)}>
+              <div>
+                <div>全部按图片识别（推荐）</div>
+                <div class="muted small">每页都识别，不用 PDF 自带的文字，最准确</div>
+              </div>
+              {ignoreText && <span class="check">✓</span>}
+            </button>
+            <button class="option" onClick={() => setIgnoreText(false)}>
+              <div>
+                <div>看起来正常的页直接用</div>
+                <div class="muted small">更快；但个别错字可能发现不了</div>
+              </div>
+              {!ignoreText && <span class="check">✓</span>}
+            </button>
+          </div>
+        </div>
+      )}
       <div class="field">
         <span class="label">书的文字</span>
         <div class="chips">

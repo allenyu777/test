@@ -9,6 +9,8 @@ import { ocrRunner } from './runner'
 export interface ScanChoice {
   engine: OcrEngine
   lang: OcrLang
+  /** 不用 PDF 自带的文字层，每页都按图片识别 */
+  ignoreText?: boolean
 }
 
 async function coverFromFirstPage(data: ArrayBuffer): Promise<{ data: ArrayBuffer; type: string } | null> {
@@ -55,7 +57,7 @@ export async function createScannedBook(
     chapter: '',
     cover: cover?.data ?? null,
     coverType: cover?.type,
-    ocr: { pages: scanned.pages, done: 0, engine: choice.engine, lang: choice.lang, status: 'running' },
+    ocr: { pages: scanned.pages, done: 0, engine: choice.engine, lang: choice.lang, status: 'running', ignoreText: choice.ignoreText },
   }
   await db.saveBook(meta, { id, blocks: [], heads: {}, toc: [], sections: [], pages: [] })
   await refreshLibrary()

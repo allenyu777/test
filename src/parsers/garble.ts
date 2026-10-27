@@ -55,3 +55,66 @@ export function guessOcrLang(text: string): 'chi_sim' | 'chi_tra' | 'eng' {
   if (!cjk && latin > 20) return 'eng'
   return trad > simp ? 'chi_tra' : 'chi_sim'
 }
+
+// 只在一种字体里出现的常用字：繁体书里混进一串简体字（或反过来），多半是 PDF 的字符映射错了
+const SIMP_ONLY = new Set(
+  '们这个为说时会对过发经么现没动还进样开从实无长机点体电话问题头关业东书车见间听读写买卖门风飞马鱼鸟龙刘陈张杨赵郑谢韩冯邓权贵党岁历义华丽号应该总欢钱极讯报导领馆护证续际处标准众观认识议论语谈让许设试详请谁调负财责败货质购费贴贸资赏赖赛赞赠赢赶运远违连迟适选递逻遗邮邻释针钟钢铁银锁错键镇闪闭闯闲闹闻阁阅队阳阴阵阶陆险随隐难雾须项顺顾顿颁频题颜额饭饮饱饰驱驶驻驾验骑鲁鲜鸡鸣鸭麦齐齿',
+)
+const TRAD_ONLY = new Set(
+  '們這個為說時會對過發經麼現沒動還進樣開從實無長機點體電話問題頭關業東書車見間聽讀寫買賣門風飛馬魚鳥龍劉陳張楊趙鄭謝韓馮鄧權貴黨歲歷義華麗號應該總歡錢極訊報導領館護證續際處標準眾觀認識議論語談讓許設試詳請誰調負財責敗貨質購費貼貿資賞賴賽贊贈贏趕運遠違連遲適選遞邏遺郵鄰釋針鐘鋼鐵銀鎖錯鍵鎮閃閉闖閒鬧聞閣閱隊陽陰陣階陸險隨隱難霧須項順顧頓頒頻題顏額飯飲飽飾驅駛駐駕驗騎魯鮮雞鳴鴨麥齊齒',
+)
+
+/** 繁简混杂：一段以繁体（简体）为主的文字里夹着好几个只有简体（繁体）才用的字 */
+export function mixedScript(text: string): boolean {
+  let simp = 0
+  let trad = 0
+  for (const ch of text) {
+    if (SIMP_ONLY.has(ch)) simp++
+    else if (TRAD_ONLY.has(ch)) trad++
+  }
+  const [major, minor] = trad >= simp ? [trad, simp] : [simp, trad]
+  return minor >= 3 && minor >= major * 0.08
+}
+
+/**
+ * PDF 一页的文字层是否不可信（应该改为按图片识别）：
+ * 整页乱码比例高；某一行几乎全是怪符号（换了字体的引文、小字常这样）；或者繁简混杂（字符映射错了）
+ */
+export function textLayerBroken(text: string): boolean {
+  if (isGarbled(text)) return true
+  const cjk = cjkShare(text) >= 0.3
+  for (const line of text.split('\n')) {
+    if (line.replace(/\s+/g, '').length < 6) continue
+    if (garbleRatio(line) >= 0.3 || (cjk && oddShare(line) >= 0.3)) return true
+  }
+  return mixedScript(text)
+}
+
+const isCjk = (c: number) => (c >= 0x3400 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0x20000 && c <= 0x3134f)
+
+/** 中文字符所占比例（不计空白） */
+export function cjkShare(text: string): number {
+  let total = 0
+  let cjk = 0
+  for (const ch of text) {
+    if (/\s/.test(ch)) continue
+    total++
+    if (isCjk(ch.codePointAt(0)!)) cjk++
+  }
+  return total ? cjk / total : 0
+}
+
+/** 中文书里不该成片出现的字符：带音调的拉丁字母、希腊、西里尔字母、各种符号 */
+function oddShare(line: string): number {
+  let total = 0
+  let odd = 0
+  for (const ch of line) {
+    if (/\s/.test(ch)) continue
+    total++
+    const c = ch.codePointAt(0)!
+    if (c < 0x80 || isCjk(c)) continue
+    if ((c >= 0x2000 && c <= 0x206f) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef) || c === 0xb7) continue
+    odd++
+  }
+  return total ? odd / total : 0
+}

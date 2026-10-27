@@ -255,6 +255,9 @@ export function SettingsPage() {
         <Row title="写完笔记后继续播放">
           <Switch on={s.resumeAfterNote} onChange={v => updateSettings({ resumeAfterNote: v })} />
         </Row>
+        <Row title="PDF 一律按图片识别" desc="PDF 自带的文字有错字、乱码时打开，之后导入的 PDF 都按页面图片识别（较慢、更准）">
+          <Switch on={s.pdfAsImages} onChange={v => updateSettings({ pdfAsImages: v })} />
+        </Row>
         <Row title="播放诊断记录" desc="锁屏按钮、播放中断等记录，遇到问题时截图发给开发者" onClick={() => setSheet('diag')}>
           <IconChevronRight size={20} class="muted" />
         </Row>
