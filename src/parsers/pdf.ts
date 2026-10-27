@@ -250,7 +250,8 @@ export async function openPdf(data: ArrayBuffer | Uint8Array, { copy = true } = 
     cMapUrl,
     cMapPacked: true,
     isEvalSupported: false,
-    disableFontFace: true,
+    // 用浏览器自己的字体引擎画字：pdf.js 自己描字形时，有些中文字体会画坏（部件错位、拆散），识别出来全是错字
+    disableFontFace: false,
   }).promise
 }
 
@@ -311,8 +312,8 @@ export async function renderPage(pdf: PdfDocument, index: number, targetWidth = 
   const page = await pdf.getPage(index + 1)
   try {
     const base = page.getViewport({ scale: 1 })
-    // iOS 对画布面积有上限，控制在约 1600 万像素以内
-    const scale = Math.min(3, targetWidth / base.width, Math.sqrt(12_000_000 / (base.width * base.height)))
+    // iOS 对画布面积有上限，控制在约 1200 万像素以内；小开本的书放大到 targetWidth（字太小时细笔画会认错，"國"认成"或"）
+    const scale = Math.min(5, targetWidth / base.width, Math.sqrt(12_000_000 / (base.width * base.height)))
     const viewport = page.getViewport({ scale })
     const canvas = document.createElement('canvas')
     canvas.width = Math.round(viewport.width)

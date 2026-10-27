@@ -7,7 +7,7 @@ import { normalizeText } from '../core/text'
 import * as db from '../db'
 import type { OcrInfo } from '../db'
 import { extendLoadedBook, library, patchBookLocal } from '../library'
-import { isGarbled, textLayerBroken } from '../parsers/garble'
+import { isGarbled, scriptCounts, textLayerBroken } from '../parsers/garble'
 import {
   openPdf,
   pageParagraphs,
@@ -19,8 +19,9 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
+import { preferTextLayer } from './match'
 import { fixRu } from './ren'
-import { dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
+import { assignParagraphs, dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
 import { findRuleLines, findTableLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
@@ -446,7 +447,36 @@ class OcrRunner {
       const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
-        const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight, rules)
+        let lines = result.lines
+        // 照片里认出来的字（报纸、横幅、招牌、零星杂字）：这一页的原文里没有，并且不含汉字，
+        // 或者繁体书里夹着简体字。很短的直接去掉（不然会把一句话切断），其余当作图片文字（灰色、不朗读）
+        if (!ocr.ignoreText && page.paragraphs.length) {
+          const flat = [...page.paragraphs, ...page.notes].join('').replace(/\s+/g, '')
+          const pageScript = scriptCounts(flat)
+          const tradPage = pageScript.trad > pageScript.simp * 3
+          const inLayer = (s: string) => {
+            if (flat.includes(s)) return true
+            const chars = [...s]
+            let hit = 0
+            for (let i = 1; i < chars.length; i++) if (flat.includes(chars[i - 1] + chars[i])) hit++
+            return chars.length > 1 && hit / (chars.length - 1) >= 0.6
+          }
+          const kind = (t: string): 'noise' | 'photo' | null => {
+            const s = t.replace(/\s+/g, '')
+            if (!s || inLayer(s)) return null
+            const cjk = /[\u3400-\u9fff]/.test(s)
+            if (!cjk) return s.length <= 3 ? 'noise' : 'photo'
+            const { simp, trad } = scriptCounts(s)
+            if (tradPage && simp >= 1 && (simp >= trad * 2 || (!trad && [...s].length <= 15))) return 'photo'
+            return null
+          }
+          if (lines.some(l => kind(l.text))) {
+            lines = assignParagraphs(
+              lines.filter(l => kind(l.text) !== 'noise').map(l => (kind(l.text) === 'photo' ? { ...l, aside: true } : l)),
+            )
+          }
+        }
+        const { body, notes } = splitFootnotes(dropMarginLines(lines, pageHeight), pageHeight, rules)
         const { body: text, figures, tops } = splitFigures(body, tableLines)
         const figureTexts: string[] = []
         const figureAt: number[] = []
@@ -458,9 +488,12 @@ class OcrRunner {
             figureAt.push(at)
           }
         })
+        // 文字层里正常的段落用原文（一字不差），坏掉的（乱码、错字）才用识别结果
+        const layer = ocr.ignoreText ? null : [...page.paragraphs, ...page.notes]
+        const keep = (paragraphs: string[]) => (layer ? preferTextLayer(paragraphs, layer) : paragraphs)
         return {
-          paragraphs: ocrTextToParagraphs(linesToText(text)),
-          notes: ocrTextToParagraphs(notesToText(notes)),
+          paragraphs: keep(ocrTextToParagraphs(linesToText(text))),
+          notes: keep(ocrTextToParagraphs(notesToText(notes))),
           figures: figureTexts,
           figureAt,
         }

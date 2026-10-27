@@ -296,3 +296,53 @@ describe('finding table lines in the page image', () => {
     expect(findTableLines(im, 0, W).map(l => l.y)).toEqual([51, 120])
   })
 })
+
+import { groupsToLines as toLines } from '../src/ocr/layout'
+
+describe('a small caption beside a narrow column of body text (p. 297)', () => {
+  const box = (text: string, x: number, y: number, w: number, h: number) => ({ text, x, y, w, h })
+  const groups = [
+    [box('信接替自己的', 100, 100, 330, 46)],
+    [box('機會。周永康', 100, 160, 330, 46), box('周永康退休後還不滿一個月，其親信四川省委', 470, 166, 700, 30)],
+    [box('退休後還不滿', 100, 220, 330, 46), box('副書記李春城就落馬了。', 470, 226, 380, 30)],
+    [box('一個月，習近', 100, 280, 330, 46)],
+    [box('平領導下的新班子就展開了對他的親信、四川省委副書記李', 100, 340, 1070, 46)],
+  ]
+  it('keeps the caption out of the body text, which reads on without it', () => {
+    const lines = assignParagraphs(toLines(groups))
+    const { body, figures } = splitFigures(lines)
+    expect(figures).toEqual([['周永康退休後還不滿一個月，其親信四川省委副書記李春城就落馬了。']])
+    expect(linesToText(body).replace(/\s+/g, '')).toBe('信接替自己的機會。周永康退休後還不滿一個月，習近平領導下的新班子就展開了對他的親信、四川省委副書記李')
+  })
+})
+
+describe('photo edges are not table borders (p. 62)', () => {
+  it('body text in a narrow column beside a photo stays body text', () => {
+    const row = (y: number, text: string, x0 = 230, x1 = 550) => ({ text, para: 0, x0, y0: y, x1, y1: y + 40 })
+    const lines = [
+      row(300, '市司法局發去明傳'),
+      row(370, '電報，稱重慶警方'),
+      row(440, '有錄音錄像證明，'),
+      row(510, '李莊在家辦案件過'),
+      row(800, '12 月 12 日夜，李莊在北京被重慶警方秘密抓捕，警察將他押回重慶。', 230, 1360),
+    ]
+    // 照片的上下边（只在照片的左右范围内）
+    const edges = [342, 347, 432, 440, 499].map(y => ({ y, x0: 631, x1: 1363 }))
+    const { figures, body } = splitFigures(lines as OcrLine[], edges)
+    expect(figures).toEqual([])
+    expect(body).toHaveLength(5)
+  })
+})
+
+describe('a dash box is not a smaller font (p. 387)', () => {
+  it('keeps the line with a dash in the body text', () => {
+    const box = (text: string, x: number, y: number, w: number, h: number) => ({ text, x, y, w, h })
+    const groups = [
+      [box('對江主席長時間地起立鼓掌。', 236, 616, 560, 36)],
+      [box('要傳達的信息是清楚的', 322, 690, 430, 34), box('——', 760, 704, 70, 4), box('江澤民身體健康，在薄熙來', 840, 686, 534, 42)],
+      [box('一案上將扮演關鍵性角色。他來到北京，會見黨内和軍隊高', 239, 758, 1136, 41)],
+    ]
+    const { figures } = splitFigures(assignParagraphs(toLines(groups)))
+    expect(figures).toEqual([])
+  })
+})

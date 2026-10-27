@@ -2,7 +2,7 @@
 // 屏幕上照常显示（灰色），朗读时跳过（设置里可以打开「朗读目录、版权页和图表」）
 import { chapterLevel } from './chapters'
 
-const TOC_TITLE = /^\s*(目\s*录|目\s*次|contents|table\s+of\s+contents)\s*$/i
+const TOC_TITLE = /^\s*(目\s*[录錄]|目\s*次|contents|table\s+of\s+contents)\s*$/i
 /** 引导点加页码："第一章 光绪初年的灾荒图景……25""Preface ........ ix" */
 const LEADER = /(?:[.．。·•…‥⋯_]\s?){3,}\s*[(（]?(?:\d{1,4}|[ivxlc]{1,6})[)）]?\s*$|(?:…|⋯){2,}\s*\d{1,4}\s*$/i
 const LEADER_G = /(?:[.．。·•…‥⋯_]\s?){3,}\s*(?:\d{1,4}|[ivxlc]{1,6})(?![\d])|(?:…|⋯){2,}\s*\d{1,4}(?!\d)/gi
@@ -56,7 +56,9 @@ function isTableRow(t: string): boolean {
   if (t.length > 300) return false
   const tokens = t.split(/[\s　|｜]+/).filter(Boolean)
   const numbers = tokens.filter(x => NUMBER_TOKEN.test(x)).length
-  return numbers >= 4 && numbers >= tokens.length * 0.5
+  // 正文里数字两边常有空格（"2012 年 1 月 23 日"），按空格切开数字也很多；表格的一行汉字很少（只有行标题）
+  const cjk = (t.match(/[\u3400-\u9fff]/g) ?? []).length
+  return numbers >= 4 && numbers >= tokens.length * 0.5 && cjk <= numbers * 4
 }
 
 function isCaption(t: string): boolean {

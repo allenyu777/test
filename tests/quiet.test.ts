@@ -126,3 +126,14 @@ describe('no false alarms in ordinary books', () => {
     })
   }
 })
+
+describe('body text with spaced numbers (text layer of a traditional PDF)', () => {
+  it('is not a table row', () => {
+    const blocks = [
+      '在中國農曆新年時，人們很看重算命大師對來年的預測，希望新的一年比過去的一年更好。',
+      '2012 年 1 月 23 日午夜，全世界的中國人迎來了 12 年一度的龍年。儘管龍——這個神話中的動物——象徵著力量、權威和好運。',
+      '2 月 4 日，網絡上出現一份疑似針對前重慶公安局長王立軍的精神狀況診斷書，來源似乎是解放軍第三軍醫大學第三附屬醫院。',
+    ]
+    expect(findQuietBlocks(blocks)).toEqual([])
+  })
+})

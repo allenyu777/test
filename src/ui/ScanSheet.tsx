@@ -26,8 +26,9 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
   const cloud = cloudOcrReady()
   const [engine, setEngine] = useState<OcrEngine>('local')
   const [lang, setLang] = useState<OcrLang>(langHint)
-  // 文字层有问题时默认每页都按图片识别（最准）；扫描版里偶尔夹着的文字页照常直接用
-  const [ignoreText, setIgnoreText] = useState(reason !== 'scanned')
+  // 默认：文字正常的页直接用原文，有问题的页才识别（识别后对得上原文的段落仍用原文）；
+  // 设置里打开了「一律按图片识别」时每页都识别
+  const [ignoreText, setIgnoreText] = useState(reason === 'forced')
   // 本机识别在手机上大约每页 10 秒；云端约 3 秒
   const estimate = formatDuration(pages * (engine === 'local' ? 10 : 3))
 
@@ -87,19 +88,19 @@ export function ScanSheet({ name, pages, reason, langHint, onDone }: Props) {
         <div class="field">
           <span class="label">PDF 自带的文字</span>
           <div class="option-list">
-            <button class="option" onClick={() => setIgnoreText(true)}>
-              <div>
-                <div>全部按图片识别（推荐）</div>
-                <div class="muted small">每页都识别，不用 PDF 自带的文字，最准确</div>
-              </div>
-              {ignoreText && <span class="check">✓</span>}
-            </button>
             <button class="option" onClick={() => setIgnoreText(false)}>
               <div>
-                <div>看起来正常的页直接用</div>
-                <div class="muted small">更快；但个别错字可能发现不了</div>
+                <div>正常的文字直接用（推荐）</div>
+                <div class="muted small">PDF 自带的文字正常的部分直接用原文，一字不差；只有乱码、错字的部分按图片识别</div>
               </div>
               {!ignoreText && <span class="check">✓</span>}
+            </button>
+            <button class="option" onClick={() => setIgnoreText(true)}>
+              <div>
+                <div>全部按图片识别</div>
+                <div class="muted small">每页都识别，完全不用 PDF 自带的文字；较慢，识别偶尔会错个别字</div>
+              </div>
+              {ignoreText && <span class="check">✓</span>}
             </button>
           </div>
         </div>

@@ -11,6 +11,8 @@ export interface OcrLine {
   y0: number
   x1: number
   y1: number
+  /** 和正文并排、字号明显更小的一块（照片旁边的说明文字） */
+  aside?: boolean
 }
 
 type RawLine = Omit<OcrLine, 'para'>
@@ -89,22 +91,45 @@ function findGutter(lines: RawLine[]): number | null {
  */
 export function groupsToLines(groups: OcrBox[][]): RawLine[] {
   const nonEmpty = groups.filter(g => g.length)
-  const whole = nonEmpty.map(boxesToLine)
+  // 比较字号只看含汉字的框（破折号、省略号的框很扁，不代表字号）
+  const sized = (b: OcrBox) => /[\u3400-\u4dff\u4e01-\u9fff]/.test(b.text.replace(/一/g, ''))
+  const bodyHeight = median(nonEmpty.flat().filter(sized).map(b => b.h))
+  // 同一行上字号差得多的两块不拼成一行：和正文并排的小字是照片说明（标记出来，当作图片说明处理）
+  const sizeSplit: (RawLine[] | null)[] = []
   const segments: RawLine[] = []
   for (const group of nonEmpty) {
     const sorted = group.slice().sort((a, b) => a.x - b.x)
     const h = median(sorted.map(b => b.h))
     let current: OcrBox[] = []
+    const parts: OcrBox[][] = []
+    let resized = false
     for (const box of sorted) {
       const prev = current[current.length - 1]
-      if (prev && box.x - (prev.x + prev.w) > h * 2) {
-        segments.push(boxesToLine(current))
+      const jump = !!prev && sized(prev) && sized(box) && Math.max(box.h, prev.h) / Math.min(box.h, prev.h) > 1.3
+      if (prev && (box.x - (prev.x + prev.w) > h * 2 || jump)) {
+        parts.push(current)
         current = []
+        resized ||= jump
       }
       current.push(box)
     }
-    if (current.length) segments.push(boxesToLine(current))
+    if (current.length) parts.push(current)
+    const lines = parts.map(boxesToLine)
+    segments.push(...lines)
+    sizeSplit.push(
+      resized
+        ? parts.map((p, k) => {
+            // 照片说明：比同一行旁边的正文明显小（不到 0.8 倍），也比全页正文小
+            const hs = p.filter(sized).map(b => b.h)
+            const others = parts.filter((_, j) => j !== k).flat().filter(sized).map(b => b.h)
+            const h = median(hs)
+            const small = hs.length > 0 && others.length > 0 && h < median(others) * 0.8 && h < bodyHeight * 0.85
+            return small ? { ...lines[k], aside: true } : lines[k]
+          })
+        : null,
+    )
   }
+  const whole = nonEmpty.map((g, k) => sizeSplit[k] ?? [boxesToLine(g)]).flat()
   const gutter = segments.length > whole.length ? findGutter(segments) : null
   if (gutter == null) return whole
   const lineHeight = median(segments.map(height))
@@ -284,9 +309,12 @@ const SENTENCE = /[，。；！？,;]/
  * tableLines：页面图片上的长横线（findTableLines）。
  */
 export function splitFigures(
-  lines: OcrLine[],
+  all: OcrLine[],
   tableLines: RuleLine[] = [],
 ): { body: OcrLine[]; figures: string[][]; /** 每个图表在页面上的上边 */ tops: number[] } {
+  // 和正文并排的小字（照片旁边的说明）：算作图片说明，正文接着读
+  const asides = all.filter(l => l.aside)
+  const lines = asides.length ? all.filter(l => !l.aside) : all
   const rows = toRows(lines)
   const rowLeft = (r: Row) => Math.min(...r.lines.map(l => l.x0))
   const rowWidth = (r: Row) => Math.max(...r.lines.map(l => l.x1)) - rowLeft(r)
@@ -297,6 +325,10 @@ export function splitFigures(
   const taken = new Set<Row>()
   const figures: string[][] = []
   const tops: number[] = []
+  if (asides.length) {
+    figures.push([asides.map(l => l.text.trim()).join('')])
+    tops.push(Math.min(...asides.map(l => l.y0)))
+  }
 
   // 标题（或表格）下面的说明：返回说明结束的位置
   const notesEnd = (from: number) => {
@@ -335,6 +367,17 @@ export function splitFigures(
       let last = rows.findIndex(r => center(r) >= y1)
       if (last < 0) last = rows.length
       if (first < 0 || first >= last) continue
+      // 表格里的字都在横线的左右范围以内；照片的上下边也是长横线，但旁边绕排的正文在照片外面，不是表格
+      const bandLines = tableLines.filter(l => l.y >= y0 && l.y <= y1)
+      const bx0 = Math.min(...bandLines.map(l => l.x0))
+      const bx1 = Math.max(...bandLines.map(l => l.x1))
+      const within = (r: Row) => {
+        const w = rowWidth(r)
+        const overlap = Math.min(bx1, rowLeft(r) + w) - Math.max(bx0, rowLeft(r))
+        return w > 0 && overlap >= w * 0.5
+      }
+      const inBand = rows.slice(first, last)
+      if (inBand.filter(within).length * 2 < inBand.length) continue
       // 上面的标题（中间可能隔着一行单位说明）
       let top = first
       for (let k = first - 1; k >= Math.max(0, first - 2); k--) {
@@ -438,7 +481,15 @@ export function assignParagraphs(lines: RawLine[]): OcrLine[] {
         const indented = l.x0 > left + charWidth * 1.2
         const deeper = l.x0 > prev.x0 + charWidth * 1.2
         const aligned = Math.abs(l.x0 - prev.x0) <= charWidth * 0.6
-        const prevShort = prev.x1 < right - charWidth * 1.5
+        // 没写满的行是一段的结尾；但绕着图片排的窄栏，每行都在同一个位置结束（和上一行对齐），不算没写满
+        const before = run[i - 2]
+        const sameEnd = (a: RawLine | undefined) =>
+          !!a &&
+          Math.abs(prev.x1 - a.x1) <= charWidth * 0.6 &&
+          Math.abs(prev.x0 - a.x0) <= charWidth * 2.5 &&
+          Math.abs(height(prev) - height(a)) <= height(prev) * 0.25
+        const column = sameEnd(before) || (sameEnd(l) && !indented)
+        const prevShort = prev.x1 < right - charWidth * 1.5 && !column
         const farApart = l.y0 - prev.y1 > Math.max(lineGap * 2, lineHeight * 0.8)
         starts = (indented && (deeper || (aligned && prevStarts))) || prevShort || farApart
       }

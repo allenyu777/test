@@ -251,6 +251,22 @@ describe('paragraphs from line positions', () => {
     ]).map(l => l.para)
     expect(paras).toEqual([0, 0, 1, 1, 1, 1, 1, 2, 3])
   })
+  it('keeps lines of a narrow column beside a photo in one paragraph', () => {
+    // 原书第 35 页：左边的正文绕着照片排，每行都只写到一半宽
+    const paras = assignParagraphs([
+      line(100, '蒙古族也好，漢族', 176, 560),
+      line(149, '也罷，王立軍確是在蒙', 120, 560),
+      line(198, '古傳統中成長起來的。', 120, 560),
+      line(247, '十幾歲的時候，他曾入', 120, 560),
+      line(296, '選過内蒙古少年拳擊', 120, 560),
+      line(345, '隊，武藝高強。1977 年', 120, 560),
+      line(394, '一個 300 萬人口的城市', 120, 560),
+      line(443, '鐵嶺期間，他曾兩次參加嚴格的入學考試，希望能進一所軍校，可是未能考上。', 120, 1020),
+      line(492, '軍和在鐵法市商業局工作的肖淑麗結了婚。', 120, 700),
+      line(541, '王立軍的警察生涯開始於 1984 年，他被當地公安局招募', 176, 1020),
+    ]).map(l => l.para)
+    expect(paras).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+  })
   it('consecutive one-line paragraphs that fill the line are still separate', () => {
     const paras = assignParagraphs([
       line(100, '正文写满了这一整行的文字，没有任何缩进也没有空出来的地方'),
