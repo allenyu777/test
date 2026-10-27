@@ -6,6 +6,7 @@ import type { BookMeta } from './db'
 import { parseFile } from './parsers'
 import { fixRu } from './ocr/ren'
 import { ScannedPdfError } from './parsers/pdf'
+import { settings } from './settings'
 import { createStore } from './store'
 
 export interface ImportState {
@@ -84,8 +85,10 @@ export async function importFiles(files: File[], options: ImportOptions = {}): P
     const base: ImportState = { name: file.name, index: i, total: files.length, progress: 0, message: '正在读取文件…' }
     library.set({ importing: base })
     try {
-      const parsed = await parseFile(file, (progress, message) =>
-        library.set({ importing: { ...base, progress, message: message ?? base.message } }),
+      const parsed = await parseFile(
+        file,
+        (progress, message) => library.set({ importing: { ...base, progress, message: message ?? base.message } }),
+        { pdfAsImages: settings.get().pdfAsImages },
       )
       library.set({ importing: { ...base, progress: 1, message: '正在保存…' } })
       const id = db.uid()

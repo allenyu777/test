@@ -3,7 +3,7 @@ import { BookBuilder, type ParsedBook, type TocEntry } from '../core/book'
 import { chapterLevel } from '../core/chapters'
 import { cjkRatio, detectLang, isCjkChar } from '../core/text'
 import type { OcrLang } from '../db'
-import { garbleRatio, guessOcrLang, isGarbled } from './garble'
+import { cjkShare, garbleRatio, guessOcrLang, isGarbled, textLayerBroken } from './garble'
 import { isNoteStart, notesToText } from './notes'
 import { titleFromFileName } from './txt'
 import type { Progress } from './foliate'
@@ -226,10 +226,10 @@ export class ScannedPdfError extends Error {
     readonly pages: number,
     readonly title: string,
     readonly author: string,
-    readonly reason: 'scanned' | 'garbled' = 'scanned',
+    readonly reason: 'scanned' | 'garbled' | 'forced' = 'scanned',
     readonly langHint: OcrLang = 'chi_sim',
   ) {
-    super(reason === 'garbled' ? '这本 PDF 的文字是乱码，需要重新识别文字' : '这是扫描版 PDF，需要先识别文字')
+    super(reason === 'scanned' ? '这是扫描版 PDF，需要先识别文字' : '这本 PDF 需要按页面图片识别文字')
   }
 }
 
@@ -363,7 +363,12 @@ export async function readOutline(pdf: PdfDocument): Promise<OutlineItem[]> {
   return result
 }
 
-export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress?: Progress): Promise<ParsedBook> {
+export async function parsePdf(
+  buffer: ArrayBuffer,
+  fileName: string,
+  onProgress?: Progress,
+  { forceImage = false }: { forceImage?: boolean } = {},
+): Promise<ParsedBook> {
   const pdf = await openPdf(buffer)
 
   try {
@@ -378,20 +383,24 @@ export async function parsePdf(buffer: ArrayBuffer, fileName: string, onProgress
     // 每页都有的水印、页眉不算正文（扫描版常带"扫描全能王"之类的文字标记）
     const repeated = repeatedLineKeys(pages)
     const pageText = pages.map(lines => dropRepeatedLines(lines, repeated).map(l => l.text).join('\n'))
-    const garbled = pageText.map(t => isGarbled(t))
+    // 中文书：某一行是怪符号、繁简混杂，也说明这一页的文字层不可信
+    const cjkBook = cjkShare(pageText.join('\n').slice(0, 200000)) >= 0.3
+    const garbled = pageText.map(t => (cjkBook ? textLayerBroken(t) : isGarbled(t)))
     const garbledPages = garbled.filter(Boolean).length
     const goodText = pageText.filter((_, i) => !garbled[i])
     const totalChars = goodText.reduce((sum, t) => sum + t.length, 0)
     const textPages = goodText.filter(t => t.length >= 20).length
     // 字体缺少正确的字符映射时，提取出的文字是乱码：这些页按图片识别
-    const tooManyGarbled = garbledPages >= Math.max(3, pdf.numPages * 0.05)
+    // 中文书只要有一页不可信就改为识别（文字正常的页面可以照常直接用文字）
+    const tooManyGarbled = cjkBook ? garbledPages > 0 : garbledPages >= Math.max(3, pdf.numPages * 0.05)
     // 大部分页面没有文字层：按扫描版处理，交给文字识别
-    if (tooManyGarbled || totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
+    if (forceImage || tooManyGarbled || totalChars < Math.max(50, pdf.numPages * 5) || textPages < pdf.numPages * 0.6) {
       const info = await pdfInfo(pdf, fileName)
       // 乱码页里的标题等行常常是正常的，也拿来判断繁简
       const cleanLines = pages.flat().map(l => l.text).filter(t => garbleRatio(t) === 0)
       const hint = guessOcrLang([info.title, info.author, ...cleanLines].join('\n').slice(0, 20000))
-      throw new ScannedPdfError(pdf.numPages, info.title, info.author, garbledPages ? 'garbled' : 'scanned', hint)
+      const reason = garbledPages ? 'garbled' : forceImage && textPages >= pdf.numPages * 0.6 ? 'forced' : 'scanned'
+      throw new ScannedPdfError(pdf.numPages, info.title, info.author, reason, hint)
     }
     // 个别乱码页（例如公式页）直接跳过
     for (let i = 0; i < pages.length; i++) if (garbled[i]) pages[i] = []

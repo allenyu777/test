@@ -7,7 +7,7 @@ import { normalizeText } from '../core/text'
 import * as db from '../db'
 import type { OcrInfo } from '../db'
 import { extendLoadedBook, library, patchBookLocal } from '../library'
-import { isGarbled } from '../parsers/garble'
+import { isGarbled, textLayerBroken } from '../parsers/garble'
 import {
   openPdf,
   pageParagraphs,
@@ -424,11 +424,12 @@ class OcrRunner {
   }
 
   private async recognizePage(pdf: PdfDocument, index: number, ocr: OcrInfo, ignore: Set<string>): Promise<RecognizedPage> {
-    // 这一页本身有文字层（扫描版里夹着的文字页）就直接用
+    // 这一页本身有文字层（扫描版里夹着的文字页）就直接用；文字层不可信的书（ignoreText）每页都识别
     const page = await pageParagraphs(pdf, index, ignore)
     const text = page.paragraphs
     const joined = text.join('\n')
-    if (joined.length >= 20 && !isGarbled(joined)) {
+    const broken = ocr.lang === 'eng' ? isGarbled(joined) : textLayerBroken(joined)
+    if (!ocr.ignoreText && joined.length >= 20 && !broken) {
       while (text.length && isPageNumber(text[0])) text.shift()
       while (text.length && isPageNumber(text[text.length - 1])) text.pop()
       return page

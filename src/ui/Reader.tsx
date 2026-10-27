@@ -4,7 +4,7 @@ import * as db from '../db'
 import type { BookMeta, Note } from '../db'
 import { library, loadBook } from '../library'
 import { ocrRunner } from '../ocr/runner'
-import { isGarbled } from '../parsers/garble'
+import { isGarbled, textLayerBroken } from '../parsers/garble'
 import { markNumber, NOTE_REF, noteRefRanges } from '../parsers/notes'
 import { copyText } from '../notes/export'
 import { player } from '../player'
@@ -492,12 +492,13 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
     })
   }
 
-  // 以前导入的乱码 PDF：提示删除后重新导入（新版会自动识别文字）
+  // 以前导入的 PDF 文字有错乱（乱码、繁简混杂的错字）：提示删除后重新导入（新版会自动发现，并按图片识别）
   const garbled = useMemo(() => {
-    if (meta.format !== 'pdf' || meta.ocr) return false
+    if (meta.format !== 'pdf' || meta.ocr?.ignoreText) return false
     const range = book.sections[section]
     if (!range) return false
-    return isGarbled(book.blocks.slice(range.start, Math.min(range.end, range.start + 40)).join('\n'))
+    const text = book.blocks.slice(range.start, Math.min(range.end, range.start + 40)).join('\n')
+    return meta.lang === 'zh' ? textLayerBroken(text) : !meta.ocr && isGarbled(text)
   }, [book, section, meta])
   const sectionView = useMemo(
     () => (book.sections[section] ? <SectionView book={book} index={section} notesMap={notesMap} /> : null),
@@ -558,9 +559,9 @@ function ReaderView({ meta, book }: { meta: BookMeta; book: Book }) {
       >
         {garbled && (
           <div class="hint" style={{ textIndent: 0, fontFamily: 'var(--ui-font)' }}>
-            <b>这本 PDF 的文字是乱码</b>
+            <b>这本 PDF 的文字有错乱</b>
             <br />
-            PDF 里的字体缺少正确的文字编码。请回到书架删除这本书，再重新导入：新版本会自动发现乱码，并按页面图片重新识别文字（繁体书选「繁体中文」）。
+            PDF 自带的文字有乱码或错字。请先在设置里「完整备份」，再回到书架删除这本书、重新导入：新版本会自动发现，并按页面图片重新识别文字（选「全部按图片识别」，繁体书选「繁体中文」）。
           </div>
         )}
         {prevSec && (
