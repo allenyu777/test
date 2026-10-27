@@ -56,7 +56,9 @@ function isTableRow(t: string): boolean {
   if (t.length > 300) return false
   const tokens = t.split(/[\s　|｜]+/).filter(Boolean)
   const numbers = tokens.filter(x => NUMBER_TOKEN.test(x)).length
-  return numbers >= 4 && numbers >= tokens.length * 0.5
+  // 正文里数字两边常有空格（"2012 年 1 月 23 日"），按空格切开数字也很多；表格的一行汉字很少（只有行标题）
+  const cjk = (t.match(/[\u3400-\u9fff]/g) ?? []).length
+  return numbers >= 4 && numbers >= tokens.length * 0.5 && cjk <= numbers * 4
 }
 
 function isCaption(t: string): boolean {

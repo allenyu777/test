@@ -315,3 +315,21 @@ describe('a small caption beside a narrow column of body text (p. 297)', () => {
     expect(linesToText(body).replace(/\s+/g, '')).toBe('信接替自己的機會。周永康退休後還不滿一個月，習近平領導下的新班子就展開了對他的親信、四川省委副書記李')
   })
 })
+
+describe('photo edges are not table borders (p. 62)', () => {
+  it('body text in a narrow column beside a photo stays body text', () => {
+    const row = (y: number, text: string, x0 = 230, x1 = 550) => ({ text, para: 0, x0, y0: y, x1, y1: y + 40 })
+    const lines = [
+      row(300, '市司法局發去明傳'),
+      row(370, '電報，稱重慶警方'),
+      row(440, '有錄音錄像證明，'),
+      row(510, '李莊在家辦案件過'),
+      row(800, '12 月 12 日夜，李莊在北京被重慶警方秘密抓捕，警察將他押回重慶。', 230, 1360),
+    ]
+    // 照片的上下边（只在照片的左右范围内）
+    const edges = [342, 347, 432, 440, 499].map(y => ({ y, x0: 631, x1: 1363 }))
+    const { figures, body } = splitFigures(lines as OcrLine[], edges)
+    expect(figures).toEqual([])
+    expect(body).toHaveLength(5)
+  })
+})

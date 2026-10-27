@@ -358,6 +358,17 @@ export function splitFigures(
       let last = rows.findIndex(r => center(r) >= y1)
       if (last < 0) last = rows.length
       if (first < 0 || first >= last) continue
+      // 表格里的字都在横线的左右范围以内；照片的上下边也是长横线，但旁边绕排的正文在照片外面，不是表格
+      const bandLines = tableLines.filter(l => l.y >= y0 && l.y <= y1)
+      const bx0 = Math.min(...bandLines.map(l => l.x0))
+      const bx1 = Math.max(...bandLines.map(l => l.x1))
+      const within = (r: Row) => {
+        const w = rowWidth(r)
+        const overlap = Math.min(bx1, rowLeft(r) + w) - Math.max(bx0, rowLeft(r))
+        return w > 0 && overlap >= w * 0.5
+      }
+      const inBand = rows.slice(first, last)
+      if (inBand.filter(within).length * 2 < inBand.length) continue
       // 上面的标题（中间可能隔着一行单位说明）
       let top = first
       for (let k = first - 1; k >= Math.max(0, first - 2); k--) {
