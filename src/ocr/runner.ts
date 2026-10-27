@@ -19,6 +19,7 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
+import { fixRu } from './ren'
 import { dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
 import { findRuleLines, findTableLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
@@ -327,6 +328,8 @@ class OcrRunner {
     const file = await db.getFile(id)
     if (!file) throw new Error('原始 PDF 不在本机，无法继续识别（可以重新导入）')
     const content: BookContent = (await db.getContent(id)) ?? { id, blocks: [], heads: {}, toc: [], sections: [], pages: [] }
+    // 以前识别的页面里认错的"入"（一字换一字，位置不变），随下一页一起保存
+    content.blocks = content.blocks.map(fixRu)
     content.pages ??= []
     this.active++
     setWakeLock(true, 'ocr')
