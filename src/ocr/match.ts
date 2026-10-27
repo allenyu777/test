@@ -104,16 +104,20 @@ export function restoreFromLayer(recognized: string, layer: string): string {
   // 第 k 个字之后的位置
   const ocrEnd = (k: number) => a.at[k] + [...recognized.slice(a.at[k])][0].length
   const layerEnd = (k: number) => b.at[k] + [...layer.slice(b.at[k])][0].length
-  let out = recognized.slice(0, a.at[pairs[0][0]])
+  const PUNCT = /^[——…“”「」『』〈〉《》（）()。，、；：！？.,;:!?'"\-－~～]+$/
+  // 识别结果段首只有标点（"——"被认成"-"）：用原文紧挨着的标点
+  const head = recognized.slice(0, a.at[pairs[0][0]])
+  const layerHead = layer.slice(0, b.at[pairs[0][1]]).match(/[——…“”「」『』〈〉《》（）]{1,3}$/)?.[0] ?? ''
+  let out = PUNCT.test(head.trim()) && layerHead ? layerHead : head
   for (let k = 0; k < pairs.length; k++) {
     const [oi, li] = pairs[k]
     out += layer.slice(b.at[li], layerEnd(li))
     const next = pairs[k + 1]
     if (!next) {
       const rest = recognized.slice(ocrEnd(oi))
-      // 识别漏掉了段尾的标点（行末的"——"、引号）：原文紧接着的标点补上
-      const tail = rest.trim() ? '' : (layer.slice(layerEnd(li)).match(/^[——…“”「」『』〉》）)。，、；：！？.,;:!?'"]{1,3}/)?.[0] ?? '')
-      out += tail + rest
+      // 识别漏掉或认错了段尾的标点（行末的"——"认成"-"、引号）：用原文紧接着的标点
+      const tail = layer.slice(layerEnd(li)).match(/^[——…“”「」『』〉》）)。，、；：！？.,;:!?'"]{1,3}/)?.[0] ?? ''
+      out += tail && (!rest.trim() || PUNCT.test(rest.trim())) ? tail : rest
       break
     }
     // 两次对上之间的部分（连同原文里的空格，例如"1977 年"）

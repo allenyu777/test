@@ -70,3 +70,13 @@ describe('punctuation the recognizer missed at the end of a paragraph', () => {
     )
   })
 })
+
+describe('dashes misread at the edge of a paragraph', () => {
+  const layer = '用了王立軍的一面之詞去對付薄熙來和他妻子。這是一個雙臝局面——\n要傳達的信息是清楚的——江澤民身體健康，在薄熙來一案上將扮演關鍵性角色。'
+  it('are restored at the end', () => {
+    expect(restoreFromLayer('用了王立軍的一面之詞去對付薄熙來和他妻子。這是一個雙臝局面-', layer)).toBe('用了王立軍的一面之詞去對付薄熙來和他妻子。這是一個雙臝局面——')
+  })
+  it('are restored at the start', () => {
+    expect(restoreFromLayer('-江澤民身體健康，在薄熙來一案上將扮演關鍵性角色。', layer)).toBe('——江澤民身體健康，在薄熙來一案上將扮演關鍵性角色。')
+  })
+})
