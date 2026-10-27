@@ -119,8 +119,12 @@ export function groupsToLines(groups: OcrBox[][]): RawLine[] {
     sizeSplit.push(
       resized
         ? parts.map((p, k) => {
+            // 照片说明：比同一行旁边的正文明显小（不到 0.8 倍），也比全页正文小
             const hs = p.filter(sized).map(b => b.h)
-            return hs.length && median(hs) < bodyHeight * 0.75 ? { ...lines[k], aside: true } : lines[k]
+            const others = parts.filter((_, j) => j !== k).flat().filter(sized).map(b => b.h)
+            const h = median(hs)
+            const small = hs.length > 0 && others.length > 0 && h < median(others) * 0.8 && h < bodyHeight * 0.85
+            return small ? { ...lines[k], aside: true } : lines[k]
           })
         : null,
     )
