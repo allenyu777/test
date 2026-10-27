@@ -1,6 +1,7 @@
 // 把文字识别结果整理成段落
 import { chapterLevel } from '../core/chapters'
 import { isCjkChar, removeCjkSpaces } from '../core/text'
+import { fixRu } from './ren'
 
 const PAGE_NUMBER = /^[\s\-—–·]*(\d{1,4}|[ivxlcdm]{1,6}|第\s*\d+\s*页|\d+\s*\/\s*\d+)[\s\-—–·]*$/i
 
@@ -49,7 +50,7 @@ export function ocrTextToParagraphs(text: string): string[] {
           .filter(Boolean),
       ),
     )
-    .map(p => p.trim())
+    .map(p => fixRu(p.trim()))
     .filter(Boolean)
   // 页码只会在页首或页尾；正文中间单独一行的数字（年份等）保留
   trimPageNumbers(paragraphs)

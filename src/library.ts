@@ -4,6 +4,7 @@ import { baseLang, detectLang } from './core/text'
 import * as db from './db'
 import type { BookMeta } from './db'
 import { parseFile } from './parsers'
+import { fixRu } from './ocr/ren'
 import { ScannedPdfError } from './parsers/pdf'
 import { createStore } from './store'
 
@@ -158,6 +159,8 @@ export async function loadBook(id: string): Promise<{ meta: BookMeta; book: Book
   }
   const [meta, content] = await Promise.all([db.getBook(id), db.getContent(id)])
   if (!meta || !content) return null
+  // 扫描版：以前识别时认错的"入"打开时改正（一字换一字，阅读位置和笔记不受影响）
+  if (meta.ocr) content.blocks = content.blocks.map(fixRu)
   cached = { meta, book: new Book(content) }
   return cached
 }
