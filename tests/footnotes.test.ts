@@ -296,3 +296,22 @@ describe('finding table lines in the page image', () => {
     expect(findTableLines(im, 0, W).map(l => l.y)).toEqual([51, 120])
   })
 })
+
+import { groupsToLines as toLines } from '../src/ocr/layout'
+
+describe('a small caption beside a narrow column of body text (p. 297)', () => {
+  const box = (text: string, x: number, y: number, w: number, h: number) => ({ text, x, y, w, h })
+  const groups = [
+    [box('信接替自己的', 100, 100, 330, 46)],
+    [box('機會。周永康', 100, 160, 330, 46), box('周永康退休後還不滿一個月，其親信四川省委', 470, 166, 700, 30)],
+    [box('退休後還不滿', 100, 220, 330, 46), box('副書記李春城就落馬了。', 470, 226, 380, 30)],
+    [box('一個月，習近', 100, 280, 330, 46)],
+    [box('平領導下的新班子就展開了對他的親信、四川省委副書記李', 100, 340, 1070, 46)],
+  ]
+  it('keeps the caption out of the body text, which reads on without it', () => {
+    const lines = assignParagraphs(toLines(groups))
+    const { body, figures } = splitFigures(lines)
+    expect(figures).toEqual([['周永康退休後還不滿一個月，其親信四川省委副書記李春城就落馬了。']])
+    expect(linesToText(body).replace(/\s+/g, '')).toBe('信接替自己的機會。周永康退休後還不滿一個月，習近平領導下的新班子就展開了對他的親信、四川省委副書記李')
+  })
+})

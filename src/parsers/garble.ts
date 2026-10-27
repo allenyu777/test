@@ -87,6 +87,8 @@ export function textLayerBroken(text: string): boolean {
     if (line.replace(/\s+/g, '').length < 6) continue
     if (garbleRatio(line) >= 0.3 || (cjk && oddShare(line) >= 0.3)) return true
   }
+  // 长段落中间夹着一小截乱码（坏字体的几个字），比例不高，但正常的中文里不会连着出现这种字符
+  if (cjk && oddRun(text) >= 3) return true
   return mixedScript(text)
 }
 
@@ -104,17 +106,36 @@ export function cjkShare(text: string): number {
   return total ? cjk / total : 0
 }
 
-/** 中文书里不该成片出现的字符：带音调的拉丁字母、希腊、西里尔字母、各种符号 */
+/** 中文书里不该出现的字符：带音调的拉丁字母、希腊、西里尔字母、各种符号 */
+const isOdd = (c: number) =>
+  !(c < 0x80 || isCjk(c) || (c >= 0x2000 && c <= 0x206f) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef) || c === 0xb7)
+
 function oddShare(line: string): number {
   let total = 0
   let odd = 0
   for (const ch of line) {
     if (/\s/.test(ch)) continue
     total++
-    const c = ch.codePointAt(0)!
-    if (c < 0x80 || isCjk(c)) continue
-    if ((c >= 0x2000 && c <= 0x206f) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef) || c === 0xb7) continue
-    odd++
+    if (isOdd(ch.codePointAt(0)!)) odd++
   }
   return total ? odd / total : 0
+}
+
+/** 连续出现的不该出现的字符最多有几个（不计空白） */
+function oddRun(text: string): number {
+  let run = 0
+  let best = 0
+  for (const ch of text) {
+    if (/\s/.test(ch)) continue
+    run = isOdd(ch.codePointAt(0)!) ? run + 1 : 0
+    best = Math.max(best, run)
+  }
+  return best
+}
+
+/** 中文书里不该出现的字符个数（段落里夹着一小截乱码时，比例不高，但个数说明问题） */
+export function oddCount(text: string): number {
+  let n = 0
+  for (const ch of text) if (!/\s/.test(ch) && isOdd(ch.codePointAt(0)!)) n++
+  return n
 }

@@ -19,8 +19,9 @@ import {
 } from '../parsers/pdf'
 import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
+import { preferTextLayer } from './match'
 import { fixRu } from './ren'
-import { dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
+import { assignParagraphs, dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
 import { findRuleLines, findTableLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
@@ -446,7 +447,17 @@ class OcrRunner {
       const result = await recognizeCanvas(canvas, ocr.engine, ocr.lang)
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
-        const { body, notes } = splitFootnotes(dropMarginLines(result.lines, pageHeight), pageHeight, rules)
+        let lines = result.lines
+        // 照片里被认出来的零星杂字（"6""A"）：很短、不含汉字、这一页的原文里也没有，去掉后重新分段（不然会把一句话切断）
+        if (!ocr.ignoreText && page.paragraphs.length) {
+          const flat = [...page.paragraphs, ...page.notes].join('').replace(/\s+/g, '')
+          const noise = (t: string) => {
+            const s = t.replace(/\s+/g, '')
+            return s.length <= 3 && !/[\u3400-\u9fff]/.test(s) && !flat.includes(s)
+          }
+          if (lines.some(l => noise(l.text))) lines = assignParagraphs(lines.filter(l => !noise(l.text)))
+        }
+        const { body, notes } = splitFootnotes(dropMarginLines(lines, pageHeight), pageHeight, rules)
         const { body: text, figures, tops } = splitFigures(body, tableLines)
         const figureTexts: string[] = []
         const figureAt: number[] = []
@@ -458,9 +469,12 @@ class OcrRunner {
             figureAt.push(at)
           }
         })
+        // 文字层里正常的段落用原文（一字不差），坏掉的（乱码、错字）才用识别结果
+        const layer = ocr.ignoreText ? null : [...page.paragraphs, ...page.notes]
+        const keep = (paragraphs: string[]) => (layer ? preferTextLayer(paragraphs, layer) : paragraphs)
         return {
-          paragraphs: ocrTextToParagraphs(linesToText(text)),
-          notes: ocrTextToParagraphs(notesToText(notes)),
+          paragraphs: keep(ocrTextToParagraphs(linesToText(text))),
+          notes: keep(ocrTextToParagraphs(notesToText(notes))),
           figures: figureTexts,
           figureAt,
         }

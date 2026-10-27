@@ -24,3 +24,14 @@ describe('broken PDF text layer', () => {
     expect(textLayerBroken('The Early Years of the Republic — Chapter 3: “Reform”, pp. 12–15.')).toBe(false)
   })
 })
+
+describe('a short run of garbage inside a long paragraph', () => {
+  it('marks the page as broken', () => {
+    const para =
+      '即使周永康可以退休，他的權力基礎也被削弱了，因為他失去了安插自己的親信接替自己的機會。周永康 ׹ϖ૵ੜЃޢᔘ̙႕˘࣎͡Ă؎࠷α̌ܫᏐ׎ 退休後還不滿一個月，習近平領導下的新班子就展開了對他的親信、四川省委副書記李春城的調查。'
+    expect(textLayerBroken(para)).toBe(true)
+  })
+  it('a foreign name with accents is fine', () => {
+    expect(textLayerBroken('法國記者弗朗索瓦（François Müller）在巴黎接受採訪時說，這件事情發生得非常突然，誰也沒有想到。')).toBe(false)
+  })
+})
