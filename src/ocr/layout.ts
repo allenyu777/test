@@ -91,7 +91,9 @@ function findGutter(lines: RawLine[]): number | null {
  */
 export function groupsToLines(groups: OcrBox[][]): RawLine[] {
   const nonEmpty = groups.filter(g => g.length)
-  const bodyHeight = median(nonEmpty.flat().map(b => b.h))
+  // 比较字号只看含汉字的框（破折号、省略号的框很扁，不代表字号）
+  const sized = (b: OcrBox) => /[\u3400-\u4dff\u4e01-\u9fff]/.test(b.text.replace(/一/g, ''))
+  const bodyHeight = median(nonEmpty.flat().filter(sized).map(b => b.h))
   // 同一行上字号差得多的两块不拼成一行：和正文并排的小字是照片说明（标记出来，当作图片说明处理）
   const sizeSplit: (RawLine[] | null)[] = []
   const segments: RawLine[] = []
@@ -103,7 +105,7 @@ export function groupsToLines(groups: OcrBox[][]): RawLine[] {
     let resized = false
     for (const box of sorted) {
       const prev = current[current.length - 1]
-      const jump = !!prev && Math.max(box.h, prev.h) / Math.min(box.h, prev.h) > 1.3
+      const jump = !!prev && sized(prev) && sized(box) && Math.max(box.h, prev.h) / Math.min(box.h, prev.h) > 1.3
       if (prev && (box.x - (prev.x + prev.w) > h * 2 || jump)) {
         parts.push(current)
         current = []
@@ -116,7 +118,10 @@ export function groupsToLines(groups: OcrBox[][]): RawLine[] {
     segments.push(...lines)
     sizeSplit.push(
       resized
-        ? parts.map((p, k) => (median(p.map(b => b.h)) < bodyHeight * 0.85 ? { ...lines[k], aside: true } : lines[k]))
+        ? parts.map((p, k) => {
+            const hs = p.filter(sized).map(b => b.h)
+            return hs.length && median(hs) < bodyHeight * 0.75 ? { ...lines[k], aside: true } : lines[k]
+          })
         : null,
     )
   }

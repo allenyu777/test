@@ -333,3 +333,16 @@ describe('photo edges are not table borders (p. 62)', () => {
     expect(body).toHaveLength(5)
   })
 })
+
+describe('a dash box is not a smaller font (p. 387)', () => {
+  it('keeps the line with a dash in the body text', () => {
+    const box = (text: string, x: number, y: number, w: number, h: number) => ({ text, x, y, w, h })
+    const groups = [
+      [box('對江主席長時間地起立鼓掌。', 236, 616, 560, 36)],
+      [box('要傳達的信息是清楚的', 322, 690, 430, 34), box('——', 760, 704, 70, 4), box('江澤民身體健康，在薄熙來', 840, 686, 534, 42)],
+      [box('一案上將扮演關鍵性角色。他來到北京，會見黨内和軍隊高', 239, 758, 1136, 41)],
+    ]
+    const { figures } = splitFigures(assignParagraphs(toLines(groups)))
+    expect(figures).toEqual([])
+  })
+})
