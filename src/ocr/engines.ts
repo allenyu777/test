@@ -1,6 +1,7 @@
 // 文字识别引擎：本机（PaddleOCR，免费、离线、不上传；设备不支持时改用 Tesseract）或云端（OpenAI 兼容的视觉模型）
 import type { OcrLang } from '../db'
 import { settings } from '../settings'
+import { diag } from '../diag'
 import { toast } from '../ui/toast'
 import { assignParagraphs, groupsToLines, type OcrLine } from './layout'
 import type { PaddleBox, PaddleErrorKind, WorkerRequest, WorkerResponse } from './paddle.worker'
@@ -47,7 +48,7 @@ export function onModelProgress(fn: (p: ModelProgress) => void): () => void {
   return () => progressListeners.delete(fn)
 }
 
-/** PaddleOCR 用不了的原因（设备不支持、多次出错）；不为空时改用 Tesseract */
+/** PaddleOCR 用不了的原因（设备不支持）；不为空时改用 Tesseract */
 let paddleUnavailable: string | null = (() => {
   try {
     return localStorage.getItem('tingshu.ocr.engine') === 'tesseract' ? '已设置使用 Tesseract' : null
@@ -115,10 +116,17 @@ function recognizePaddle(bitmap: ImageBitmap): Promise<PaddleBox[][]> {
       reject: done(reject),
       arm: (ms, message) => {
         clearTimeout(timer)
-        // 卡住了：结束后台线程，下次重新创建
-        timer = setTimeout(() => {
-          if (job?.id === id) terminatePaddle(new PaddleError(message, 'timeout'))
-        }, ms)
+        // 卡住了：结束后台线程，下次重新创建。
+        // 锁屏、切到后台时 iOS 会大幅放慢运算，慢是正常的，不算超时（回到前台后再计时）
+        const check = () => {
+          if (job?.id !== id) return
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+            timer = setTimeout(check, ms)
+            return
+          }
+          terminatePaddle(new PaddleError(message, 'timeout'))
+        }
+        timer = setTimeout(check, ms)
       },
     }
     job.arm(180_000, '这一页识别超时')
@@ -150,13 +158,24 @@ async function recognizeLocal(canvas: HTMLCanvasElement, lang: OcrLang): Promise
         return { text: '', lines: assignParagraphs(groupsToLines(groups)) }
       } catch (e) {
         if (!(e instanceof PaddleError) || e.kind === 'download') throw e
+        diag(`识别引擎出错（${e.kind}）：${e.message}`)
         // 出错后后台线程可能已经坏了，换一个新的
         terminatePaddle()
-        if (e.kind === 'unsupported') paddleUnavailable = e.message
-        else if (++paddleFailures >= 2) paddleUnavailable = `识别引擎多次出错（${e.message}）`
-        else throw e
-        console.warn('改用 Tesseract 识别：', paddleUnavailable)
-        toast('这台设备运行不了新的识别引擎，已改用兼容模式（准确率会低一些）', 'info', { duration: 6000 })
+        if (e.kind === 'unsupported') {
+          // 设备确实不支持：以后都用 Tesseract
+          paddleUnavailable = e.message
+          diag(`改用兼容识别引擎：${e.message}`)
+          toast('这台设备运行不了新的识别引擎，已改用兼容模式（准确率会低一些）', 'info', { duration: 6000 })
+        } else if (++paddleFailures < 3) {
+          // 偶尔出错（内存紧张、超时）：交给外面重试，下次换一个新的后台线程。
+          // 不要因此一直改用 Tesseract：它认繁体字很差，会认成一段段对不上的字
+          throw e
+        } else {
+          // 同一页接连出错：只有这一页用 Tesseract，下一页照常先用 PaddleOCR
+          paddleFailures = 0
+          diag('这一页接连出错，只有这一页改用兼容识别引擎')
+          return { text: '', lines: await recognizeTesseract(canvas, lang) }
+        }
       }
     }
     return { text: '', lines: await recognizeTesseract(canvas, lang) }
