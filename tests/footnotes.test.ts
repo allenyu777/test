@@ -346,3 +346,22 @@ describe('a dash box is not a smaller font (p. 387)', () => {
     expect(figures).toEqual([])
   })
 })
+
+import { isRepeatedLine, repeatedLineKeys } from '../src/parsers/pdf'
+
+describe('running heads that alternate between odd and even pages', () => {
+  const page = (head: string, n: number) => [{ text: head }, { text: `正文第 ${n} 頁的第一行，寫滿了一整行的文字。` }, { text: `正文第 ${n} 頁的最後一行。` }, { text: String(n) }]
+  const pages = Array.from({ length: 20 }, (_, i) => page(i % 2 ? '薄熙來事件秘密報告' : '中國權貴的死亡遊戲', i + 1))
+  it('both heads are found', () => {
+    const keys = repeatedLineKeys(pages)
+    expect(keys.has('中國權貴的死亡遊戲')).toBe(true)
+    expect(keys.has('薄熙來事件秘密報告')).toBe(true)
+  })
+  it('a recognized head with a stray character still matches; titles in 《》 and body text do not', () => {
+    const keys = new Set(['中國權貴的死亡遊戲', '薄熙來事件秘密報告'])
+    expect(isRepeatedLine('薄熙來事件秘密報告!', keys)).toBe(true)
+    expect(isRepeatedLine('中國權貴的死亡遊戲', keys)).toBe(true)
+    expect(isRepeatedLine('《中國權貴的死亡遊戲》', keys)).toBe(false)
+    expect(isRepeatedLine('重慶市反腐打黑戰役的著名英雄王立軍。', keys)).toBe(false)
+  })
+})

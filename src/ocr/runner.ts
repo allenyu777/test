@@ -13,6 +13,7 @@ import {
   pageParagraphs,
   readOutline,
   renderPage,
+  isRepeatedLine,
   sampleRepeatedLines,
   type OutlineItem,
   type PdfDocument,
@@ -356,7 +357,10 @@ class OcrRunner {
 
         const recognized = await this.recognizeWithRetry(id, pdf, p, ocr, repeated)
         if (!recognized) return
-        const raw = recognized.paragraphs
+        // 每页开头、结尾的页眉（书名），文字层和识别结果里都可能留下来
+        const raw = recognized.paragraphs.slice()
+        while (raw.length && isRepeatedLine(raw[0], repeated)) raw.shift()
+        while (raw.length && isRepeatedLine(raw[raw.length - 1], repeated)) raw.pop()
         const notes = recognized.notes.map(t => normalizeText(t)).filter(Boolean)
         const figureList = (recognized.figures ?? []).map((t, k) => ({ text: normalizeText(t), at: recognized.figureAt?.[k] }))
         const titles = outline.filter(item => item.page === p).map(item => item.title)
