@@ -82,6 +82,24 @@ const median = (values: number[]) => {
 
 const normalizeRepeat = (s: string) => s.replace(/\d+/g, '#').replace(/\s+/g, '')
 
+/**
+ * 是不是已知的页眉页脚（每页重复的那一行）。识别出的页眉常多一两个杂字、标点（"薄熙來事件秘密報告!"），也算
+ */
+export function isRepeatedLine(text: string, repeated: Set<string>): boolean {
+  if (!repeated.size || text.length > 40) return false
+  const bare = (s: string) => s.replace(/\d+/g, '').replace(/[^\p{L}]/gu, '')
+  // 带书名号的是正文里的书名、标题（"《中國權貴的死亡遊戲》中文版後記"），不是页眉
+  if (/[《》〈〉]/.test(text)) return false
+  const t = bare(text)
+  if (t.length < 3) return false
+  for (const key of repeated) {
+    const k = bare(key)
+    if (k.length < 3) continue
+    if (t === k || (t.includes(k) && t.length - k.length <= 2) || (k.includes(t) && k.length - t.length <= 1)) return true
+  }
+  return false
+}
+
 /** 页面顶部、底部各两行（页眉、页脚、水印所在的位置） */
 function edgeLines<T>(lines: T[]): T[] {
   return lines.length <= 4 ? lines : [...lines.slice(0, 2), ...lines.slice(-2)]
@@ -91,7 +109,8 @@ function edgeLines<T>(lines: T[]): T[] {
  * 在很多页的顶部或底部重复出现的短行（页眉、水印、"扫描全能王"之类的标记）。
  * 乱码行不算，留给乱码检测。
  */
-export function repeatedLineKeys(pages: { text: string }[][], minShare = 0.5): Set<string> {
+// 单双页交替的页眉（单数页印书名、双数页印副标题）各自只出现在一半左右的页面上，所以门槛是三成
+export function repeatedLineKeys(pages: { text: string }[][], minShare = 0.3): Set<string> {
   const counts = new Map<string, number>()
   for (const lines of pages) {
     const keys = new Set(edgeLines(lines).filter(l => l.text.length <= 60 && garbleRatio(l.text) < 0.15).map(l => normalizeRepeat(l.text)))
@@ -286,9 +305,13 @@ export async function pageLines(pdf: PdfDocument, index: number): Promise<Line[]
 /** 抽样找出各页重复的文字行（水印、页眉），识别时忽略 */
 export async function sampleRepeatedLines(pdf: PdfDocument): Promise<Set<string>> {
   const n = pdf.numPages
-  const step = Math.max(1, Math.floor(n / 30))
+  const step = Math.max(2, Math.floor(n / 15))
   const pages: Line[][] = []
-  for (let i = 0; i < n; i += step) pages.push(await pageLines(pdf, i))
+  // 每次取相邻的两页：页眉常是单双页交替的，间隔固定的抽样可能只抽到单数页
+  for (let i = 0; i < n; i += step) {
+    pages.push(await pageLines(pdf, i))
+    if (i + 1 < n) pages.push(await pageLines(pdf, i + 1))
+  }
   return repeatedLineKeys(pages)
 }
 
