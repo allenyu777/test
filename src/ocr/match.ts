@@ -117,7 +117,11 @@ export function restoreFromLayer(recognized: string, layer: string): string {
       const rest = recognized.slice(ocrEnd(oi))
       // 识别漏掉或认错了段尾的标点（行末的"——"认成"-"、引号）：用原文紧接着的标点
       const tail = layer.slice(layerEnd(li)).match(/^[——…“”「」『』〉》）)。，、；：！？.,;:!?'"]{1,3}/)?.[0] ?? ''
-      out += tail && (!rest.trim() || PUNCT.test(rest.trim())) ? tail : rest
+      // 段尾认错的一两个字成了怪字符（"好評"认成"好ř"）：原文紧接着的字正常时用原文
+      const restChars = [...rest.replace(/\s+/g, '')]
+      const layerNext = [...layer.slice(layerEnd(li)).replace(/\s+/g, '')].slice(0, restChars.length).join('')
+      const oddTail = restChars.length > 0 && restChars.length <= 3 && isOddText(rest) && layerNext.length === restChars.length && !isOddText(layerNext)
+      out += oddTail ? layerNext : tail && (!rest.trim() || PUNCT.test(rest.trim())) ? tail : rest
       break
     }
     // 两次对上之间的部分（连同原文里的空格，例如"1977 年"）

@@ -92,3 +92,10 @@ describe('a recognized paragraph that starts with the end of the previous layer 
     expect(out.startsWith('的方式，誘導他的當事人偽造證據。與此同時')).toBe(true)
   })
 })
+
+describe('an odd character misread at the end of a paragraph', () => {
+  it('is replaced by the layer character', () => {
+    const layer = '(PublicAffairs)出版，中文版根據英文版譯出。\n本書獲得諸多國際媒體好評఺֞ߏ̫ࠎͤ೬ϯᓠႧ'
+    expect(restoreFromLayer('本書獲得諸多國際媒體好ř', layer)).toBe('本書獲得諸多國際媒體好評')
+  })
+})
