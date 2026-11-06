@@ -14,6 +14,7 @@ import {
   readOutline,
   renderPage,
   isRepeatedLine,
+  pageImageBoxes,
   sampleRepeatedLines,
   type OutlineItem,
   type PdfDocument,
@@ -22,7 +23,7 @@ import { setWakeLock } from '../tts/audio'
 import { recognizeCanvas, releaseLocalOcr } from './engines'
 import { preferTextLayer } from './match'
 import { fixRu } from './ren'
-import { assignParagraphs, dropMarginLines, linesToText, splitFigures, splitFootnotes } from './layout'
+import { assignParagraphs, dropMarginLines, linesToText, splitFigures, splitFootnotes, type OcrLine } from './layout'
 import { findRuleLines, findTableLines, type RuleLine } from './rules'
 import { notesToText, splitTrailingNotes } from '../parsers/notes'
 import {
@@ -452,6 +453,37 @@ class OcrRunner {
       // 本机识别有每一行的位置：先按位置去掉页眉页脚，分出页面下方的脚注
       if (result.lines) {
         let lines = result.lines
+        // 落在照片、插图范围里的字是图片里的文字（招牌、报纸、横幅），当作图片文字（灰色、不朗读）。
+        // 整页就是一张图的（扫描页）不算
+        const images = (await pageImageBoxes(pdf, index).catch(() => [])).filter(b => (b.x1 - b.x0) * (b.y1 - b.y0) < 0.6)
+        if (images.length) {
+          const w = canvas.width || 1
+          const layerFlat = ocr.ignoreText ? '' : [...page.paragraphs, ...page.notes].join('').replace(/\s+/g, '')
+          // 文字层里有这一行（大致对得上）：是正文
+          const inLayerText = (t: string) => {
+            const chars = [...t.replace(/\s+/g, '')]
+            if (!layerFlat || chars.length < 2) return false
+            let hit = 0
+            for (let i = 1; i < chars.length; i++) if (layerFlat.includes(chars[i - 1] + chars[i])) hit++
+            return hit / (chars.length - 1) >= 0.6
+          }
+          const heights = lines.map(l => l.y1 - l.y0).sort((a, b) => a - b)
+          const bodyHeight = heights[Math.floor(heights.length / 2)] ?? 0
+          const inImage = (l: OcrLine) => {
+            const x = (l.x0 + l.x1) / 2 / w
+            const y = (l.y0 + l.y1) / 2 / pageHeight
+            // 整行都在图片里（从图片里面开始）；正文和旁边的说明被认成一行时，开头在图片外面，不算
+            const left = l.x0 / w
+            if (images.some(b => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 && left > b.x0 - 0.01)) return true
+            // 紧贴在图片正下方、字比正文小、文字层里也没有的一两行：图片说明
+            return (
+              images.some(b => x > b.x0 - 0.05 && x < b.x1 + 0.05 && y > b.y1 && y < b.y1 + 0.06) &&
+              l.y1 - l.y0 < bodyHeight * 0.85 &&
+              !inLayerText(l.text)
+            )
+          }
+          if (lines.some(inImage)) lines = assignParagraphs(lines.map(l => (inImage(l) ? { ...l, aside: true } : l)))
+        }
         // 照片里认出来的字（报纸、横幅、招牌、零星杂字）：这一页的原文里没有，并且不含汉字，
         // 或者繁体书里夹着简体字。很短的直接去掉（不然会把一句话切断），其余当作图片文字（灰色、不朗读）
         if (!ocr.ignoreText && page.paragraphs.length) {
