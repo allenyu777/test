@@ -15,6 +15,8 @@ interface BackupManifest {
   books: Omit<BookMeta, 'cover'>[]
   notes: Note[]
   audio: { id: string; type: string }[]
+  /** 书里的插图（完整备份才有；旧备份没有） */
+  images?: { id: string; bookId: string; type: string; width: number; height: number }[]
   /** 听书统计（旧备份没有） */
   stats?: ListenStats
 }
@@ -37,6 +39,9 @@ export async function createBackup(includeBooks: boolean): Promise<File> {
   for (const a of audio) files[`audio/${a.id}`] = new Uint8Array(a.data)
   if (includeBooks) {
     for (const c of await db.listContents()) files[`contents/${c.id}.json`] = strToU8(JSON.stringify(c))
+    const images = await db.listImages()
+    manifest.images = images.map(({ data: _data, ...rest }) => rest)
+    for (const img of images) files[`images/${img.id}`] = new Uint8Array(img.data)
   }
   files['backup.json'] = strToU8(JSON.stringify(manifest))
   const zip = zipSync(files, { level: 6 })
@@ -204,6 +209,16 @@ export async function restoreBackup(file: File): Promise<{ books: number; notes:
     idMap.set(meta.id, meta.id)
     books++
   }
+
+  // 插图：正文里记的是图片 id，原样放回（书换成本机的那本时跟着改书 id）
+  const restoredImages: db.ImageRecord[] = []
+  for (const img of manifest.images ?? []) {
+    const data = files[`images/${img.id}`]
+    const bookId = idMap.get(img.bookId)
+    if (!data || !bookId) continue
+    restoredImages.push({ ...img, bookId, data: data.slice().buffer })
+  }
+  await db.saveImages(restoredImages)
 
   const types = new Map(manifest.audio.map(a => [a.id, a.type]))
   let notes = 0

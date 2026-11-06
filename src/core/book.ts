@@ -54,7 +54,12 @@ export interface BookContent {
   quiet?: number[]
   /** 扫描版：按版面认出的插图和图表说明（并入 quiet） */
   captions?: number[]
+  /** 插图：段落序号 → 图片 id（图片存在本机数据库里；这一段只显示图片，不朗读） */
+  images?: Record<number, string>
 }
+
+/** 插图所在段落的文字（占位，不显示、不朗读） */
+export const IMAGE_BLOCK = '［插图］'
 
 export class BookBuilder {
   blocks: string[] = []
@@ -181,6 +186,8 @@ export class Book {
   noteBlocks: Set<number> = new Set()
   /** 目录页、版权页、图表说明等只看不听的段落 */
   quietBlocks: Set<number> = new Set()
+  /** 插图：段落序号 → 图片 id */
+  images: Record<number, string> = {}
   /** 朗读时跳过脚注 */
   skipNotes = true
   /** 朗读时跳过目录页、版权页、图表 */
@@ -206,6 +213,7 @@ export class Book {
     while (lastBody > 0 && (this.noteBlocks.has(lastBody) || this.quietBlocks.has(lastBody))) lastBody--
     this.noteBlocks = new Set(content.notes)
     this.quietBlocks = new Set(content.quiet)
+    this.images = content.images ?? {}
     this.blocks = content.blocks
     this.toc = content.toc
     this.sections = content.sections
@@ -264,7 +272,14 @@ export class Book {
   }
 
   /** 朗读时跳过的段落 */
+  /** 这一段是插图 */
+  imageOf(b: number): string | undefined {
+    return this.images[b]
+  }
+
   skipped(b: number): boolean {
+    // 插图始终不朗读（即使设置里打开了朗读图表说明）
+    if (this.images[b]) return true
     return (this.skipNotes && this.noteBlocks.has(b)) || (this.skipQuiet && this.quietBlocks.has(b))
   }
 

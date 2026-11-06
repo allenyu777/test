@@ -931,6 +931,46 @@ a {
   text-indent: 2em;
 }
 
+/* 书里的插图（扫描版 PDF 识别时裁下来的照片） */
+.reader-content figure.pic {
+  margin: 0.6em 0 0.5em;
+  text-align: center;
+}
+
+.reader-content .book-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+
+.reader-content .book-image.placeholder {
+  width: 100%;
+  height: 160px;
+  background: var(--hl);
+  opacity: 0.4;
+}
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  cursor: zoom-out;
+}
+
+.image-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .reader-content[data-lang='en'] p,
 .reader-content[data-lang='latin'] p {
   text-indent: 0;

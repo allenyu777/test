@@ -1,5 +1,5 @@
 // 扫描版 PDF 的后台识别：逐页识别、逐页保存，识别完一页就能接着听
-import { buildSections, type BookContent, type TocEntry } from '../core/book'
+import { buildSections, IMAGE_BLOCK, type BookContent, type TocEntry } from '../core/book'
 import { detectChapters } from '../core/chapters'
 import { findQuietBlocks } from '../core/quiet'
 import { placeToc } from '../core/tocplace'
@@ -15,6 +15,7 @@ import {
   renderPage,
   isRepeatedLine,
   pageImageBoxes,
+  type ImageBox,
   sampleRepeatedLines,
   type OutlineItem,
   type PdfDocument,
@@ -45,6 +46,41 @@ interface RecognizedPage {
   notes: string[]
   figures?: string[]
   figureAt?: number[]
+  /** 页面上的插图（裁下来的图片），放在第 at 段前面 */
+  images?: PageImage[]
+}
+
+interface PageImage {
+  data: ArrayBuffer
+  type: string
+  width: number
+  height: number
+  at: number
+}
+
+/** 插图存成的最大宽度（像素） */
+const IMAGE_MAX_WIDTH = 1000
+
+/** 从画好的页面上裁下插图，压缩成 JPEG */
+async function cropImages(canvas: HTMLCanvasElement, boxes: ImageBox[]): Promise<(Omit<PageImage, 'at'> & { box: ImageBox })[]> {
+  const out: (Omit<PageImage, 'at'> & { box: ImageBox })[] = []
+  for (const b of boxes) {
+    const sx = Math.round(b.x0 * canvas.width)
+    const sy = Math.round(b.y0 * canvas.height)
+    const sw = Math.round((b.x1 - b.x0) * canvas.width)
+    const sh = Math.round((b.y1 - b.y0) * canvas.height)
+    if (sw < 20 || sh < 20) continue
+    const scale = Math.min(1, IMAGE_MAX_WIDTH / sw)
+    const crop = document.createElement('canvas')
+    crop.width = Math.round(sw * scale)
+    crop.height = Math.round(sh * scale)
+    crop.getContext('2d')?.drawImage(canvas, sx, sy, sw, sh, 0, 0, crop.width, crop.height)
+    const blob = await new Promise<Blob | null>(resolve => crop.toBlob(resolve, 'image/jpeg', 0.82))
+    if (blob) out.push({ data: await blob.arrayBuffer(), type: 'image/jpeg', width: crop.width, height: crop.height, box: b })
+    crop.width = 0
+    crop.height = 0
+  }
+  return out
 }
 
 /**
@@ -119,6 +155,8 @@ export function appendPage(
   figures: string[] = [],
   /** 每段插图、表格文字放在第几段正文前面（不给就放在这一页最后） */
   figureAt: number[] = [],
+  /** 插图（已存进数据库的图片 id），放在第 at 段正文前面，排在同一位置的图片说明前面 */
+  images: { id: string; at: number }[] = [],
 ) {
   content.pages ??= []
   // 上一页末尾的脚注、插图说明不算正文：跨页的半句话接到它们前面那一段
@@ -136,7 +174,16 @@ export function appendPage(
   // 指向这一页上开始的第一段（接上去的半句话算上一页的段落）
   content.pages[page] = content.blocks.length
   const at = figures.map((_, k) => Math.min(paragraphs.length, Math.max(0, figureAt[k] ?? paragraphs.length)))
+  const clamp = (n: number) => Math.min(paragraphs.length, Math.max(0, n))
   for (let i = 0; i <= paragraphs.length; i++) {
+    for (const image of images) {
+      if (clamp(image.at) !== i) continue
+      const b = content.blocks.push(IMAGE_BLOCK) - 1
+      content.captions ??= []
+      content.captions.push(b)
+      content.images ??= {}
+      content.images[b] = image.id
+    }
     figures.forEach((figure, k) => {
       if (at[k] !== i) return
       content.captions ??= []
@@ -360,10 +407,13 @@ class OcrRunner {
         if (!recognized) return
         // 每页开头、结尾的页眉（书名），文字层和识别结果里都可能留下来
         const raw = recognized.paragraphs.slice()
-        while (raw.length && isRepeatedLine(raw[0], repeated)) raw.shift()
+        let headCut = 0
+        while (raw.length && isRepeatedLine(raw[0], repeated)) raw.shift(), headCut++
         while (raw.length && isRepeatedLine(raw[raw.length - 1], repeated)) raw.pop()
+        // 去掉开头的页眉后，"放在第几段前面"也跟着往前挪
+        const shiftAt = (at: number | undefined) => (at == null ? at : Math.max(0, at - headCut))
         const notes = recognized.notes.map(t => normalizeText(t)).filter(Boolean)
-        const figureList = (recognized.figures ?? []).map((t, k) => ({ text: normalizeText(t), at: recognized.figureAt?.[k] }))
+        const figureList = (recognized.figures ?? []).map((t, k) => ({ text: normalizeText(t), at: shiftAt(recognized.figureAt?.[k]) }))
         const titles = outline.filter(item => item.page === p).map(item => item.title)
         const paragraphs = applyOutlineTitles(stripRunningHeads(raw, edges.flat(), titles), titles)
           .map(t => normalizeText(t))
@@ -372,7 +422,10 @@ class OcrRunner {
         const plate = isPlatePage(paragraphs)
         const figures = figureList.filter(f => f.text)
         const figureAt = figures.map(f => placeAfterCleanup(raw, paragraphs, f.at))
-        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes, figures.map(f => f.text), figureAt)
+        // 插图：存进数据库，正文里只记图片 id
+        const pictures = (recognized.images ?? []).map(img => ({ ...img, id: db.uid(), at: placeAfterCleanup(raw, paragraphs, shiftAt(img.at)) }))
+        await db.saveImages(pictures.map(({ id: imageId, data, type, width, height }) => ({ id: imageId, bookId: id, data, type, width, height })))
+        appendPage(content, p, paragraphs, titles, prevIsText && !plate, notes, figures.map(f => f.text), figureAt, pictures.map(({ id: imageId, at }) => ({ id: imageId, at })))
         // 整页都是插图、图表说明时，下一页还可以接上前一页没说完的话
         if (paragraphs.length || !figures.length) prevIsText = paragraphs.length > 0 && !plate
         rebuildOcrContent(content, outline)
@@ -435,10 +488,21 @@ class OcrRunner {
     const text = page.paragraphs
     const joined = text.join('\n')
     const broken = ocr.lang === 'eng' ? isGarbled(joined) : textLayerBroken(joined)
+    // 页面上的照片、插图（整页就是一张图的扫描页不算）
+    const imageBoxes = (await pageImageBoxes(pdf, index).catch(() => [])).filter(b => (b.x1 - b.x0) * (b.y1 - b.y0) < 0.6)
     if (!ocr.ignoreText && joined.length >= 20 && !broken) {
       while (text.length && isPageNumber(text[0])) text.shift()
       while (text.length && isPageNumber(text[text.length - 1])) text.pop()
-      return page
+      if (!imageBoxes.length) return page
+      // 文字直接用原文的页：只为了插图画一次页面；没有每行的位置，按图片在页面上的高度估计放在第几段前面
+      const canvas = await renderPage(pdf, index, 1200)
+      try {
+        const crops = await cropImages(canvas, imageBoxes)
+        return { ...page, images: crops.map(({ box, ...c }) => ({ ...c, at: Math.round(text.length * box.y0) })) }
+      } finally {
+        canvas.width = 0
+        canvas.height = 0
+      }
     }
     if (ocr.engine === 'cloud' && typeof navigator !== 'undefined' && navigator.onLine === false) {
       throw new Error('云端识别：没有网络，联网后会自动继续')
@@ -446,6 +510,7 @@ class OcrRunner {
     const canvas = await renderPage(pdf, index)
     try {
       const pageHeight = canvas.height
+      const crops = await cropImages(canvas, imageBoxes)
       // 识别前先在图片上找脚注线（识别时画布的内容可能被交给后台线程）
       const rules = ocr.engine === 'cloud' ? [] : pageRuleLines(canvas)
       const tableLines = ocr.engine === 'cloud' ? [] : pageTableLines(canvas)
@@ -455,7 +520,7 @@ class OcrRunner {
         let lines = result.lines
         // 落在照片、插图范围里的字是图片里的文字（招牌、报纸、横幅），当作图片文字（灰色、不朗读）。
         // 整页就是一张图的（扫描页）不算
-        const images = (await pageImageBoxes(pdf, index).catch(() => [])).filter(b => (b.x1 - b.x0) * (b.y1 - b.y0) < 0.6)
+        const images = imageBoxes
         if (images.length) {
           const w = canvas.width || 1
           const layerFlat = ocr.ignoreText ? '' : [...page.paragraphs, ...page.notes].join('').replace(/\s+/g, '')
@@ -467,22 +532,42 @@ class OcrRunner {
             for (let i = 1; i < chars.length; i++) if (layerFlat.includes(chars[i - 1] + chars[i])) hit++
             return hit / (chars.length - 1) >= 0.6
           }
-          const heights = lines.map(l => l.y1 - l.y0).sort((a, b) => a - b)
-          const bodyHeight = heights[Math.floor(heights.length / 2)] ?? 0
+          // 照片正下方、文字层里没有的一两行（照片说明）：说明和下面的正文之间空得比平常的行距大。
+          // 正文紧接在照片下面时（例如和说明被认成一行），下一行是正常行距，不算说明
+          const sorted = lines.slice().sort((a, b) => a.y0 - b.y0)
+          const insideAny = (l: OcrLine) => {
+            const y = (l.y0 + l.y1) / 2 / pageHeight
+            return images.some(b => y > b.y0 && y < b.y1)
+          }
+          const textLines = sorted.filter(l => !insideAny(l))
+          const gaps = textLines.slice(1).map((l, i) => l.y0 - textLines[i].y1).filter(g => g > 0).sort((a, b) => a - b)
+          const lineGap = gaps[Math.floor(gaps.length / 2)] ?? 0
+          const captions = new Set<OcrLine>()
+          for (const b of images) {
+            const near = sorted.filter(l => {
+              const x = (l.x0 + l.x1) / 2 / w
+              const y = (l.y0 + l.y1) / 2 / pageHeight
+              return x > b.x0 - 0.05 && x < b.x1 + 0.05 && y > b.y1 && y < b.y1 + 0.06 && !inLayerText(l.text)
+            })
+            if (!near.length) continue
+            const lastLine = near[near.length - 1]
+            const after = sorted.find(l => l.y0 >= lastLine.y1 && !near.includes(l))
+            if (!after || after.y0 - lastLine.y1 > lineGap * 1.5) for (const l of near) captions.add(l)
+          }
           const inImage = (l: OcrLine) => {
             const x = (l.x0 + l.x1) / 2 / w
             const y = (l.y0 + l.y1) / 2 / pageHeight
             // 整行都在图片里（从图片里面开始）；正文和旁边的说明被认成一行时，开头在图片外面，不算
             const left = l.x0 / w
-            if (images.some(b => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 && left > b.x0 - 0.01)) return true
-            // 紧贴在图片正下方、字比正文小、文字层里也没有的一两行：图片说明
-            return (
-              images.some(b => x > b.x0 - 0.05 && x < b.x1 + 0.05 && y > b.y1 && y < b.y1 + 0.06) &&
-              l.y1 - l.y0 < bodyHeight * 0.85 &&
-              !inLayerText(l.text)
+            return images.some(b => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 && left > b.x0 - 0.01)
+          }
+          // 照片本身会放进书里：照片里认出来的字直接去掉；没能裁下照片时保留为图片文字（灰色）
+          const shown = crops.length > 0
+          if (lines.some(l => inImage(l) || captions.has(l))) {
+            lines = assignParagraphs(
+              lines.filter(l => !(shown && inImage(l))).map(l => (inImage(l) || captions.has(l) ? { ...l, aside: true } : l)),
             )
           }
-          if (lines.some(inImage)) lines = assignParagraphs(lines.map(l => (inImage(l) ? { ...l, aside: true } : l)))
         }
         // 照片里认出来的字（报纸、横幅、招牌、零星杂字）：这一页的原文里没有，并且不含汉字，
         // 或者繁体书里夹着简体字。很短的直接去掉（不然会把一句话切断），其余当作图片文字（灰色、不朗读）
@@ -532,10 +617,15 @@ class OcrRunner {
           notes: keep(ocrTextToParagraphs(notesToText(notes))),
           figures: figureTexts,
           figureAt,
+          // 插图放在它上面的那些正文后面（和图片说明一样）
+          images: crops.map(({ box, ...c }) => ({
+            ...c,
+            at: ocrTextToParagraphs(linesToText(text.filter(l => l.y1 <= box.y0 * pageHeight))).length,
+          })),
         }
       }
       const { body, notes } = splitTrailingNotes(ocrTextToParagraphs(result.text))
-      return { paragraphs: body, notes }
+      return { paragraphs: body, notes, images: crops.map(({ box, ...c }) => ({ ...c, at: Math.round(body.length * box.y0) })) }
     } finally {
       // 及时释放画布内存（iOS 对画布总内存有限制）
       canvas.width = 0
