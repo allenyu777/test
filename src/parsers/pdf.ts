@@ -330,6 +330,68 @@ export async function pageParagraphs(pdf: PdfDocument, index: number, ignore?: S
   }
 }
 
+/** 页面上的一张图片占的区域（按页面宽高的比例，左上角为原点） */
+export interface ImageBox {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+type Matrix = [number, number, number, number, number, number]
+const multiply = (m: Matrix, n: Matrix): Matrix => [
+  m[0] * n[0] + m[2] * n[1],
+  m[1] * n[0] + m[3] * n[1],
+  m[0] * n[2] + m[2] * n[3],
+  m[1] * n[2] + m[3] * n[3],
+  m[0] * n[4] + m[2] * n[5] + m[4],
+  m[1] * n[4] + m[3] * n[5] + m[5],
+]
+
+/**
+ * 一页上各张图片（照片、插图）的位置：识别时落在图片里的字是图片里的文字（招牌、报纸、横幅），不是正文。
+ * 跟着绘制指令里的坐标变换走，每张图片画在变换后的单位正方形里。
+ */
+export async function pageImageBoxes(pdf: PdfDocument, index: number): Promise<ImageBox[]> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const OPS = pdfjs.OPS
+  const page = await pdf.getPage(index + 1)
+  try {
+    const viewport = page.getViewport({ scale: 1 })
+    const list = await page.getOperatorList()
+    let ctm: Matrix = [1, 0, 0, 1, 0, 0]
+    const stack: Matrix[] = []
+    const boxes: ImageBox[] = []
+    list.fnArray.forEach((fn, i) => {
+      const args = list.argsArray[i] as unknown[]
+      if (fn === OPS.save) stack.push(ctm)
+      else if (fn === OPS.restore) ctm = stack.pop() ?? ctm
+      else if (fn === OPS.transform) ctm = multiply(ctm, args as Matrix)
+      else if (fn === OPS.paintFormXObjectBegin) {
+        stack.push(ctm)
+        const m = args?.[0] as Matrix | null
+        if (m && m.length === 6) ctm = multiply(ctm, m)
+      } else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm
+      else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
+        const corners = [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1],
+        ].map(([x, y]) => viewport.convertToViewportPoint(ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]))
+        const xs = corners.map(c => c[0] / viewport.width)
+        const ys = corners.map(c => c[1] / viewport.height)
+        const box = { x0: Math.max(0, Math.min(...xs)), y0: Math.max(0, Math.min(...ys)), x1: Math.min(1, Math.max(...xs)), y1: Math.min(1, Math.max(...ys)) }
+        // 太小的（装饰线、小图标）不算
+        if ((box.x1 - box.x0) * (box.y1 - box.y0) > 0.01) boxes.push(box)
+      }
+    })
+    return boxes
+  } finally {
+    page.cleanup()
+  }
+}
+
 /** 把一页渲染成图片（供文字识别），宽度约 targetWidth 像素 */
 export async function renderPage(pdf: PdfDocument, index: number, targetWidth = 1600): Promise<HTMLCanvasElement> {
   const page = await pdf.getPage(index + 1)
