@@ -467,12 +467,20 @@ class OcrRunner {
             for (let i = 1; i < chars.length; i++) if (layerFlat.includes(chars[i - 1] + chars[i])) hit++
             return hit / (chars.length - 1) >= 0.6
           }
+          const heights = lines.map(l => l.y1 - l.y0).sort((a, b) => a - b)
+          const bodyHeight = heights[Math.floor(heights.length / 2)] ?? 0
           const inImage = (l: OcrLine) => {
             const x = (l.x0 + l.x1) / 2 / w
             const y = (l.y0 + l.y1) / 2 / pageHeight
-            if (images.some(b => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1)) return true
-            // 紧贴在图片正下方、文字层里没有的一两行：图片说明
-            return images.some(b => x > b.x0 - 0.05 && x < b.x1 + 0.05 && y > b.y1 && y < b.y1 + 0.06) && !inLayerText(l.text)
+            // 整行都在图片里（从图片里面开始）；正文和旁边的说明被认成一行时，开头在图片外面，不算
+            const left = l.x0 / w
+            if (images.some(b => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 && left > b.x0 - 0.01)) return true
+            // 紧贴在图片正下方、字比正文小、文字层里也没有的一两行：图片说明
+            return (
+              images.some(b => x > b.x0 - 0.05 && x < b.x1 + 0.05 && y > b.y1 && y < b.y1 + 0.06) &&
+              l.y1 - l.y0 < bodyHeight * 0.85 &&
+              !inLayerText(l.text)
+            )
           }
           if (lines.some(inImage)) lines = assignParagraphs(lines.map(l => (inImage(l) ? { ...l, aside: true } : l)))
         }

@@ -80,3 +80,15 @@ describe('dashes misread at the edge of a paragraph', () => {
     expect(restoreFromLayer('-江澤民身體健康，在薄熙來一案上將扮演關鍵性角色。', layer)).toBe('——江澤民身體健康，在薄熙來一案上將扮演關鍵性角色。')
   })
 })
+
+describe('a recognized paragraph that starts with the end of the previous layer paragraph (p. 62)', () => {
+  it('keeps the start', () => {
+    const layer = [
+      '市司法局發去明傳電報，稱重慶警方有錄音錄像證明，李莊在承辦案件過程中，用“眨眼”的方式，誘導他的當事人偽造證據。',
+      '與此同時，稱自己被吊了八天八夜，打得大小便失禁的李莊的當事人也對檢察官承認，李莊律師唆使他編造證言。',
+    ]
+    const ocr = '的方式，誘導他的當事人偽造證據。與此同時，稱自己被吊了八天八夜，打得大小便失禁的李莊的當事人也對檢察官承認，'
+    const out = preferTextLayer([ocr], layer)[0]
+    expect(out.startsWith('的方式，誘導他的當事人偽造證據。與此同時')).toBe(true)
+  })
+})
