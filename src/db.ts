@@ -84,19 +84,30 @@ export interface AudioRecord {
   type: string
 }
 
+/** 书里的插图（扫描版 PDF 识别时从页面上裁下来） */
+export interface ImageRecord {
+  id: string
+  bookId: string
+  data: ArrayBuffer
+  type: string
+  width: number
+  height: number
+}
+
 interface Schema extends DBSchema {
   books: { key: string; value: BookMeta }
   contents: { key: string; value: BookContent }
   notes: { key: string; value: Note; indexes: { bookId: string } }
   audio: { key: string; value: AudioRecord }
   files: { key: string; value: FileRecord }
+  images: { key: string; value: ImageRecord; indexes: { bookId: string } }
 }
 
 let dbPromise: Promise<IDBPDatabase<Schema>> | null = null
 
 function db() {
   if (!dbPromise) {
-    dbPromise = openDB<Schema>('tingshu', 2, {
+    dbPromise = openDB<Schema>('tingshu', 3, {
       // iOS 在后台可能关闭数据库连接；下次使用时重新打开
       terminated() {
         dbPromise = null
@@ -114,6 +125,7 @@ function db() {
           database.createObjectStore('audio', { keyPath: 'id' })
         }
         if (oldVersion < 2) database.createObjectStore('files', { keyPath: 'id' })
+        if (oldVersion < 3) database.createObjectStore('images', { keyPath: 'id' }).createIndex('bookId', 'bookId')
       },
     })
   }
@@ -177,7 +189,9 @@ export async function getContent(id: string) {
 export async function deleteBook(id: string) {
   const d = await db()
   const notes = await d.getAllFromIndex('notes', 'bookId', id)
-  const tx = d.transaction(['books', 'contents', 'notes', 'audio', 'files'], 'readwrite')
+  const images = await d.getAllKeysFromIndex('images', 'bookId', id)
+  const tx = d.transaction(['books', 'contents', 'notes', 'audio', 'files', 'images'], 'readwrite')
+  for (const key of images) await tx.objectStore('images').delete(key)
   await tx.objectStore('books').delete(id)
   await tx.objectStore('contents').delete(id)
   await tx.objectStore('files').delete(id)
@@ -238,6 +252,21 @@ async function writeOcrPatch(id: string, patch: Partial<OcrInfo>): Promise<OcrIn
   await tx.store.put({ ...current, ocr })
   await tx.done
   return ocr
+}
+
+export async function saveImages(records: ImageRecord[]) {
+  if (!records.length) return
+  const tx = (await db()).transaction('images', 'readwrite')
+  for (const r of records) await tx.store.put(r)
+  await tx.done
+}
+
+export async function getImage(id: string) {
+  return (await db()).get('images', id)
+}
+
+export async function listImages(): Promise<ImageRecord[]> {
+  return (await db()).getAll('images')
 }
 
 export async function saveFile(record: FileRecord) {

@@ -365,3 +365,19 @@ describe('running heads that alternate between odd and even pages', () => {
     expect(isRepeatedLine('重慶市反腐打黑戰役的著名英雄王立軍。', keys)).toBe(false)
   })
 })
+
+import { IMAGE_BLOCK } from '../src/core/book'
+
+describe('pictures from a scanned page', () => {
+  it('are placed before their caption and are never read aloud', () => {
+    const content: BookContent = { id: 'b', blocks: ['上一頁的最後一段。'], heads: {}, toc: [], sections: [], pages: [0] }
+    appendPage(content, 1, ['照片上面的正文。', '照片下面的正文。'], [], true, [], ['2009 年的法蘭克福書展。'], [1], [{ id: 'img1', at: 1 }])
+    expect(content.blocks).toEqual(['上一頁的最後一段。', '照片上面的正文。', IMAGE_BLOCK, '2009 年的法蘭克福書展。', '照片下面的正文。'])
+    expect(content.images).toEqual({ 2: 'img1' })
+    const book = new Book({ ...content, quiet: content.captions })
+    expect(book.imageOf(2)).toBe('img1')
+    book.skipQuiet = false
+    expect(book.skipped(2)).toBe(true)
+    expect(book.speakableFrom({ b: 2, o: 0 })).toEqual({ b: 3, o: 0 })
+  })
+})

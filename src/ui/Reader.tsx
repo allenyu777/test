@@ -126,10 +126,54 @@ function withRefs(text: string, from: number, to: number, refs: [number, number]
 }
 
 // 注意：不要引入 preact/compat，它会把 onChange 改成 input 事件，导致拖动进度条时不停跳转
+// 插图：从本机数据库读出来，同一张图只读一次
+const imageUrls = new Map<string, Promise<string | null>>()
+function imageUrl(id: string): Promise<string | null> {
+  let url = imageUrls.get(id)
+  if (!url) {
+    url = db.getImage(id).then(r => (r ? URL.createObjectURL(new Blob([r.data], { type: r.type })) : null))
+    imageUrls.set(id, url)
+  }
+  return url
+}
+
+/** 书里的一张插图；点一下全屏查看 */
+function BookImage({ id }: { id: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [full, setFull] = useState(false)
+  useEffect(() => {
+    let alive = true
+    imageUrl(id).then(u => alive && setUrl(u))
+    return () => {
+      alive = false
+    }
+  }, [id])
+  if (!url) return <div class="book-image placeholder" />
+  return (
+    <>
+      <img class="book-image" src={url} alt="插图" loading="lazy" onClick={() => setFull(true)} />
+      {full && (
+        <div class="image-viewer" onClick={() => setFull(false)}>
+          <img src={url} alt="插图" />
+        </div>
+      )}
+    </>
+  )
+}
+
 function SectionView({ book, index, notesMap }: { book: Book; index: number; notesMap: Map<string, Note[]> }) {
   const { start, end } = book.sections[index]
   const out = []
   for (let b = start; b < end; b++) {
+    const image = book.imageOf(b)
+    if (image) {
+      out.push(
+        <figure key={b} data-b={b} class="pic">
+          <BookImage id={image} />
+        </figure>,
+      )
+      continue
+    }
     const text = book.blocks[b]
     const head = book.heads[b]
     const children: (string | preact.JSX.Element)[] = []

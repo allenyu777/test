@@ -54,7 +54,8 @@ export function TocSheet({
     const t = setTimeout(() => setTerm(query.trim()), 200)
     return () => clearTimeout(t)
   }, [query])
-  const hits = useMemo(() => (term ? searchBook(book.blocks, term, SEARCH_LIMIT) : []), [book, term, book.blocks.length])
+  // 插图段落只有占位文字，不参与搜索
+  const hits = useMemo(() => (term ? searchBook(book.blocks, term, SEARCH_LIMIT).filter(h => !book.imageOf(h.b)) : []), [book, term, book.blocks.length])
   const current = book.tocIndex(pos.b)
   const listRef = useRef<HTMLDivElement>(null)
   // 每一章上次读到的位置
